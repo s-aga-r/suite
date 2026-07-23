@@ -35,6 +35,7 @@ import {
 	HardDriveUpload,
 	Mailbox,
 	Palette,
+	ShieldCheck,
 	TreePalm,
 	User,
 	Zap,
@@ -53,6 +54,7 @@ import Account from '@/apps/mail/components/Settings/Account.vue'
 import AdvancedSettings from '@/apps/mail/components/Settings/AdvancedSettings.vue'
 import AppearanceSettings from '@/apps/mail/components/Settings/AppearanceSettings.vue'
 import AutomationSettings from '@/apps/mail/components/Settings/AutomationSettings.vue'
+import EncryptionSettings from '@/apps/mail/components/Settings/EncryptionSettings.vue'
 import ExportSettings from '@/apps/mail/components/Settings/ExportSettings.vue'
 import FolderSettings from '@/apps/mail/components/Settings/FolderSettings.vue'
 import IdentitySettings from '@/apps/mail/components/Settings/IdentitySettings.vue'
@@ -138,6 +140,13 @@ const tabGroups = computed((): SettingsTabGroup[] => {
 					value: 'vacation-response',
 					icon: TreePalm,
 					component: markRaw(VacationResponseSettings),
+					condition: jmap,
+				},
+				{
+					label: __('Encryption'),
+					value: 'encryption',
+					icon: ShieldCheck,
+					component: markRaw(EncryptionSettings),
 					condition: jmap,
 				},
 				{

@@ -30,6 +30,39 @@
 					multiple
 					@change="onFilesSelected"
 				/>
+
+				<!-- S/MIME · OpenPGP -->
+				<Button
+					v-if="canSign"
+					variant="ghost"
+					class="max-h-6 max-w-6"
+					:class="{ 'text-ink-green-3': sign }"
+					:tooltip="sign ? __('Signing enabled') : __('Sign this message')"
+					@click="emit('toggleSign')"
+				>
+					<template #icon>
+						<ShieldCheck class="icon" />
+					</template>
+				</Button>
+				<Button
+					v-if="canSign"
+					variant="ghost"
+					class="max-h-6 max-w-6"
+					:class="{ 'text-ink-blue-3': encrypt }"
+					:disabled="!canEncrypt"
+					:tooltip="
+						canEncrypt
+							? encrypt
+								? __('Encryption enabled')
+								: __('Encrypt this message')
+							: __('No encryption key for one or more recipients')
+					"
+					@click="emit('toggleEncrypt')"
+				>
+					<template #icon>
+						<Lock class="icon" />
+					</template>
+				</Button>
 			</div>
 
 			<!-- Send & Discard -->
@@ -54,7 +87,7 @@
 </template>
 <script setup lang="ts">
 import { computed, useTemplateRef } from 'vue'
-import { Laugh, Paperclip, SendHorizontal, Trash2 } from 'lucide-vue-next'
+import { Laugh, Lock, Paperclip, SendHorizontal, ShieldCheck, Trash2 } from 'lucide-vue-next'
 import { Button, TextEditorFixedMenu } from 'frappe-ui'
 
 import { isMac } from '@/apps/mail/utils'
@@ -63,9 +96,20 @@ import EmojiPicker from '@/apps/mail/components/EmojiPicker.vue'
 
 const { isRecipientsEmpty } = defineProps<{
 	isRecipientsEmpty: boolean
+	sign?: boolean
+	encrypt?: boolean
+	canSign?: boolean
+	canEncrypt?: boolean
 }>()
 
-const emit = defineEmits(['appendEmoji', 'selectFiles', 'discardMail', 'sendMail'])
+const emit = defineEmits([
+	'appendEmoji',
+	'selectFiles',
+	'discardMail',
+	'sendMail',
+	'toggleSign',
+	'toggleEncrypt',
+])
 
 const modifier = computed(() => (isMac ? '⌘' : 'Ctrl'))
 

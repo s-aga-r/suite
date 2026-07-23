@@ -1,0 +1,182 @@
+{
+ "actions": [],
+ "autoname": "hash",
+ "creation": "2026-07-23 00:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "user",
+  "email",
+  "column_break_meta",
+  "protocol",
+  "label",
+  "options_section",
+  "is_default",
+  "sign_by_default",
+  "column_break_opts",
+  "request_encryption",
+  "material_section",
+  "certificate",
+  "chain",
+  "private_key",
+  "details_section",
+  "fingerprint",
+  "common_name",
+  "column_break_details",
+  "not_valid_after"
+ ],
+ "fields": [
+  {
+   "fieldname": "user",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "label": "User",
+   "options": "User",
+   "reqd": 1
+  },
+  {
+   "fieldname": "email",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Email Address",
+   "options": "Email",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_meta",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "protocol",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "label": "Protocol",
+   "options": "S/MIME\nPGP",
+   "reqd": 1
+  },
+  {
+   "fieldname": "label",
+   "fieldtype": "Data",
+   "label": "Label"
+  },
+  {
+   "fieldname": "options_section",
+   "fieldtype": "Section Break",
+   "label": "Options"
+  },
+  {
+   "default": "0",
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "label": "Default key for this address"
+  },
+  {
+   "default": "0",
+   "fieldname": "sign_by_default",
+   "fieldtype": "Check",
+   "label": "Sign outgoing mail by default"
+  },
+  {
+   "fieldname": "column_break_opts",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "request_encryption",
+   "fieldtype": "Check",
+   "label": "Encrypt when recipient keys are available"
+  },
+  {
+   "fieldname": "material_section",
+   "fieldtype": "Section Break",
+   "label": "Key Material"
+  },
+  {
+   "description": "PEM certificate (S/MIME) or ASCII-armored public key (PGP).",
+   "fieldname": "certificate",
+   "fieldtype": "Code",
+   "label": "Certificate / Public Key",
+   "reqd": 1
+  },
+  {
+   "description": "Optional intermediate CA chain (PEM), S/MIME only.",
+   "fieldname": "chain",
+   "fieldtype": "Code",
+   "label": "Certificate Chain"
+  },
+  {
+   "description": "PEM private key (S/MIME) or ASCII-armored private key (PGP). Stored encrypted.",
+   "fieldname": "private_key",
+   "fieldtype": "Password",
+   "label": "Private Key"
+  },
+  {
+   "fieldname": "details_section",
+   "fieldtype": "Section Break",
+   "label": "Details"
+  },
+  {
+   "fieldname": "fingerprint",
+   "fieldtype": "Data",
+   "label": "Fingerprint",
+   "read_only": 1
+  },
+  {
+   "fieldname": "common_name",
+   "fieldtype": "Data",
+   "label": "Common Name / User ID",
+   "read_only": 1
+  },
+  {
+   "fieldname": "column_break_details",
+   "fieldtype": "Column Break"
+  },
+  {
+   "fieldname": "not_valid_after",
+   "fieldtype": "Datetime",
+   "label": "Expires On",
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-07-23 00:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mail",
+ "name": "Mail Crypto Key",
+ "naming_rule": "Random",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "delete": 1,
+   "read": 1,
+   "role": "Suite Admin",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "if_owner": 1,
+   "read": 1,
+   "role": "Suite User",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": []
+}

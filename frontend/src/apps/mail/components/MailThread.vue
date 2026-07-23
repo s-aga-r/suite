@@ -144,6 +144,7 @@
 												>
 													{{ mail.from_name || mail.from_email }}
 												</span>
+												<MailSecurityBadge :security="mail.security" />
 												<span
 													v-if="!isMobile"
 													class="text-ink-gray-5 truncate"
@@ -417,6 +418,7 @@ import LinkifiedText from '@/components/LinkifiedText.vue'
 import MailActions from '@/apps/mail/components/MailActions.vue'
 import MailDate from '@/apps/mail/components/MailDate.vue'
 import MailDetails from '@/apps/mail/components/MailDetails.vue'
+import MailSecurityBadge from '@/apps/mail/components/MailSecurityBadge.vue'
 import MailDetailsPopover from '@/apps/mail/components/MailDetailsPopover.vue'
 import SendMail from '@/apps/mail/components/SendMail.vue'
 import ThreadDivider from '@/apps/mail/components/ThreadDivider.vue'

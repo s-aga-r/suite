@@ -431,6 +431,7 @@ def serialize_mail(mail: dict) -> dict:
 		**{field: mail[field] for field in mail_fields},
 		"text_body": "" if html else mail.get("text_body", ""),
 		"attachments": serialize_attachments(mail.get("attachments", [])),
+		"security": mail.get("security"),
 	}
 
 
@@ -521,6 +522,8 @@ def create_mail(
 	in_reply_to_id: str | None = None,
 	forwarded_from_id: str | None = None,
 	save_as_draft: bool = False,
+	sign: bool = False,
+	encrypt: bool = False,
 ) -> dict:
 	"""Creates new mail queue."""
 
@@ -559,6 +562,8 @@ def create_mail(
 		attachments=doc_attachments,
 		recipients=recipients,
 		save_as_draft=save_as_draft,
+		sign=sign,
+		encrypt=encrypt,
 	)
 
 	if not save_as_draft and doc.status == "Submitted":
@@ -581,6 +586,8 @@ def update_draft_mail(
 	from_name: str = "",
 	attachments: list[dict] | None = None,
 	submit: bool = False,
+	sign: bool = False,
+	encrypt: bool = False,
 ) -> dict:
 	"""Creates new mail queue from existing draft message."""
 
@@ -633,7 +640,7 @@ def update_draft_mail(
 				{"type": type, "email": email.get("email"), "display_name": email.get("display_name")},
 			)
 
-	queue = message.submit() if submit else message.save_draft()
+	queue = message.submit(sign=sign, encrypt=encrypt) if submit else message.save_draft()
 
 	if submit and queue.status == "Submitted":
 		create_contacts_if_not_exists(account, message.recipients)

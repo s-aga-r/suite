@@ -173,6 +173,8 @@ class MailQueue(OwnerFromUser, Document):
 		doc.destroy_after_submit = cint(kwargs.destroy_after_submit)
 		doc.delivery_mode = kwargs.delivery_mode or "Immediate"
 		doc.raw_message = kwargs.raw_message
+		doc.sign = cint(kwargs.sign)
+		doc.encrypt = cint(kwargs.encrypt)
 
 		if not do_not_save:
 			if frappe.flags.read_only:
@@ -687,6 +689,13 @@ class MailQueue(OwnerFromUser, Document):
 			reply_to: list[EmailAddress] = []
 			attachments: list[EmailAttachment] = []
 
+			# S/MIME / OpenPGP: build the protected message ourselves and submit it as
+			# raw RFC822 (Email/import). Done here — before attachments are uploaded to
+			# JMAP blobs — so the crypto layer sits inside DKIM, which Stalwart applies
+			# on delivery.
+			if (self.sign or self.encrypt) and not self.raw_message:
+				self.raw_message = self._build_protected_raw_message(email_service)
+
 			if not self.raw_message:
 				headers = [
 					EmailHeader(name=key, value=value)
@@ -808,6 +817,99 @@ class MailQueue(OwnerFromUser, Document):
 				setattr(self, key, value)
 		else:
 			self._db_set(notify=True, **kwargs)
+
+	def _build_protected_raw_message(self, email_service) -> str:
+		"""Assemble, then S/MIME- or PGP-protect, the outgoing message as raw RFC822.
+
+		The sending identity's :doctype:`Mail Crypto Key` decides the protocol.
+		Encryption additionally requires a :doctype:`Mail Peer Key` for every
+		recipient; if one is missing we fail loudly rather than send in the clear.
+		"""
+
+		from email.utils import format_datetime, formatdate
+
+		from suite.mail.doctype.mail_crypto_key.mail_crypto_key import get_crypto_key
+		from suite.mail.doctype.mail_peer_key.mail_peer_key import get_peer_keys
+		from suite.mail.doctype.mail_message.mail_message import fetch_blob
+		from suite.mail.utils.crypto import Protocol, pgp, smime
+		from suite.mail.utils.crypto.mimeutil import build_content_mime, graft_headers
+
+		key = get_crypto_key(self.user, self.from_email)
+		if not key:
+			frappe.throw(
+				_("No S/MIME or PGP key is configured for {0}.").format(frappe.bold(self.from_email))
+			)
+
+		protocol = key.protocol
+		recipients = json_loads(self.recipients, default=[])
+
+		# Resolve attachment bytes (crypto embeds them; they are not uploaded to JMAP).
+		attachments = []
+		for a in json_loads(self.attachments, default=[]):
+			if a.get("blob_id"):
+				content = fetch_blob(self.account, a["blob_id"])
+			else:
+				content = MailQueue._get_file(file_url=a["file_url"], check_permission=False).get_content()
+			attachments.append(
+				{
+					"content": content,
+					"filename": a.get("filename"),
+					"type": a.get("type") or guess_type(a.get("filename") or "")[0],
+					"cid": a.get("cid"),
+					"disposition": a.get("disposition"),
+				}
+			)
+
+		content_mime = build_content_mime(self.html_body, self.text_body, attachments)
+
+		# Envelope headers grafted back on after protection (Bcc stays out of headers).
+		to = [f'{r["display_name"]} <{r["email"]}>'.strip() for r in recipients if r["type"] == "To"]
+		cc = [f'{r["display_name"]} <{r["email"]}>'.strip() for r in recipients if r["type"] == "Cc"]
+		headers = [
+			("From", f"{self.from_name} <{self.from_email}>" if self.from_name else self.from_email),
+			("To", ", ".join(to) or None),
+			("Cc", ", ".join(cc) or None),
+			("Subject", self.subject),
+			("Date", format_datetime(get_datetime(self.sent_at)) if self.sent_at else formatdate(localtime=True)),
+			("Message-ID", f"<{self.message_id}>" if self.message_id else None),
+			("In-Reply-To", f"<{self.in_reply_to}>" if self.in_reply_to else None),
+		]
+
+		recipient_materials: list[str] = []
+		if self.encrypt:
+			missing = []
+			for r in recipients:
+				materials = get_peer_keys(self.account, r["email"], protocol)
+				if not materials:
+					missing.append(r["email"])
+				recipient_materials.extend(materials)
+			if missing:
+				frappe.throw(
+					_("Cannot encrypt: no {0} key for {1}.").format(protocol, ", ".join(sorted(set(missing))))
+				)
+			# Include our own certificate so the copy in Sent is decryptable too.
+			recipient_materials.append(key.certificate)
+
+		if protocol == Protocol.SMIME.value:
+			private_key = key.get_password("private_key")
+			if self.sign and self.encrypt:
+				protected = smime.sign_and_encrypt(
+					content_mime, key.certificate, private_key, recipient_materials, key.chain or b""
+				)
+			elif self.sign:
+				protected = smime.sign(content_mime, key.certificate, private_key, key.chain or b"")
+			else:
+				protected = smime.encrypt(content_mime, recipient_materials)
+		else:
+			private_material = key.get_password("private_key")
+			if self.encrypt:
+				protected = pgp.encrypt(
+					content_mime, recipient_materials, sign_with=private_material if self.sign else None
+				)
+			else:
+				protected = pgp.sign(content_mime, private_material)
+
+		return graft_headers(protected, headers).decode("utf-8", "surrogateescape")
 
 	def _get_recipients(self, type: Literal["To", "Cc", "Bcc"] | None = None) -> list[dict[str, str | None]]:
 		"""Returns the recipients."""

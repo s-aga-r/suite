@@ -27,8 +27,10 @@ dependencies = [
     "paramiko~=5.0.0",
     "icalendar~=6.1.0",
     "dnspython~=2.6.1",
+    "pysequoia~=0.1.34",
     "pydenticon~=0.3.1",
     "dns-lexicon~=3.20.1",
+    "cryptography>=44.0.0",
     "ansible-runner~=2.4.1",
     # sheets — AI Assist (Claude)
     "anthropic>=0.40",
@@ -38,6 +40,7 @@ dependencies = [
 packages = [
     "ffmpeg",   # drive: video thumbnails/transcode
     "ansible",  # mail: stalwart provisioning (ansible-runner)
+    "openssl",  # mail: S/MIME signature verification (openssl cms -verify)
 ]
 
 [build-system]

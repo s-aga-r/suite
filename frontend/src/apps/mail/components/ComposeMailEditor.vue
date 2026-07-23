@@ -191,12 +191,18 @@
 		<template #bottom>
 			<ComposeMailToolbar
 				:is-recipients-empty
+				:sign="mail.sign"
+				:encrypt="mail.encrypt"
+				:can-sign="canSign"
+				:can-encrypt="canEncrypt"
 				class="border-t"
 				:class="{ 'border-transparent': isDragging }"
 				@select-files="(files: File[]) => uploadFiles(files)"
 				@append-emoji="(emoji: string) => appendEmoji(emoji)"
 				@discard-mail="discardMail"
 				@send-mail="sendMail"
+				@toggle-sign="toggleSign"
+				@toggle-encrypt="toggleEncrypt"
 			/>
 		</template>
 	</TextEditor>
@@ -355,6 +361,8 @@ const mail = reactive<ComposeMailData>({
 	in_reply_to: mailDetails?.in_reply_to || '',
 	in_reply_to_id: mailDetails?.in_reply_to_id || '',
 	forwarded_from_id: mailDetails?.forwarded_from_id || '',
+	sign: false,
+	encrypt: false,
 })
 
 const originalMail = ref<ComposeMailData>()
@@ -370,6 +378,60 @@ onMounted(() => {
 onUnmounted(() => saveDraft())
 
 watchDebounced(mail, () => saveDraft(), { debounce: 2000 })
+
+// S/MIME · OpenPGP availability
+
+const signingAddresses = createResource({
+	url: 'suite.mail.api.crypto.get_signing_addresses',
+	auto: true,
+	onSuccess: () => applyDefaultSecurity(),
+})
+
+const activeKey = computed(() =>
+	(signingAddresses.data ?? []).find(
+		(a: { email: string }) => a.email === mail.from_email?.toLowerCase(),
+	),
+)
+const canSign = computed(() => !!activeKey.value)
+
+const recipientEmails = computed(() =>
+	[...(mail.to ?? []), ...(mail.cc ?? []), ...(mail.bcc ?? [])]
+		.map((r) => r.email)
+		.filter(Boolean),
+)
+
+const recipientKeyCheck = createResource({
+	url: 'suite.mail.api.crypto.check_recipient_keys',
+	makeParams: () => ({
+		account: store.accountId,
+		emails: recipientEmails.value,
+		protocol: activeKey.value?.protocol,
+	}),
+})
+const canEncrypt = computed(
+	() => canSign.value && recipientEmails.value.length > 0 && !!recipientKeyCheck.data?.can_encrypt,
+)
+
+const applyDefaultSecurity = () => {
+	if (activeKey.value?.sign_by_default) mail.sign = true
+	if (activeKey.value?.request_encryption) mail.encrypt = true
+}
+
+const toggleSign = () => (mail.sign = !mail.sign)
+const toggleEncrypt = () => (mail.encrypt = !mail.encrypt)
+
+watch(
+	[() => mail.from_email, recipientEmails, () => activeKey.value?.protocol],
+	() => {
+		if (canSign.value && recipientEmails.value.length) recipientKeyCheck.reload()
+		if (!canSign.value) mail.sign = mail.encrypt = false
+	},
+	{ immediate: true },
+)
+
+watch(canEncrypt, (ok) => {
+	if (!ok) mail.encrypt = false
+})
 
 // Actions
 

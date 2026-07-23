@@ -128,6 +128,7 @@ export interface Mail {
 	attachments: Attachment[]
 	user_image?: string
 	collapsed?: boolean
+	security?: MailSecurity | null
 }
 
 export interface DraftRecipient {
@@ -151,6 +152,20 @@ export interface ComposeMailData {
 	in_reply_to_id?: string
 	forwarded_from_id?: string
 	type?: 'reply' | 'replyAll' | 'forward'
+	sign?: boolean
+	encrypt?: boolean
+}
+
+export interface MailSecurity {
+	protocol: 'S/MIME' | 'PGP' | null
+	signed: boolean
+	encrypted: boolean
+	signature_valid: boolean | null
+	trusted: boolean
+	signer: string | null
+	signer_name: string | null
+	signer_fingerprint: string | null
+	errors: string[]
 }
 
 export interface Thread {

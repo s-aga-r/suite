@@ -357,10 +357,10 @@ class MailMessage(Document):
 		return self._update_or_submit_draft(save_as_draft=True)
 
 	@frappe.whitelist()
-	def submit(self) -> "MailQueue":
+	def submit(self, sign: bool = False, encrypt: bool = False) -> "MailQueue":
 		"""Submit the draft Mail Message."""
 
-		return self._update_or_submit_draft(save_as_draft=False)
+		return self._update_or_submit_draft(save_as_draft=False, sign=sign, encrypt=encrypt)
 
 	@frappe.whitelist()
 	def move_to_mailbox(self, mailbox_id: str) -> None:
@@ -579,7 +579,9 @@ class MailMessage(Document):
 		]:
 			self.__dict__.pop(property, None)
 
-	def _update_or_submit_draft(self, save_as_draft: bool = True) -> "MailQueue":
+	def _update_or_submit_draft(
+		self, save_as_draft: bool = True, sign: bool = False, encrypt: bool = False
+	) -> "MailQueue":
 		"""Update or submit the draft Mail Message."""
 
 		if not self.draft:
@@ -619,6 +621,8 @@ class MailMessage(Document):
 			in_reply_to=self.in_reply_to,
 			save_as_draft=save_as_draft,
 			delivery_mode="Immediate",
+			sign=sign,
+			encrypt=encrypt,
 		)
 
 	def _reply(self, recipients: list[dict]) -> "MailQueue":
@@ -1248,7 +1252,202 @@ def format_message(account: str, mailbox_map: dict, message: dict) -> dict:
 					attachment["url"],
 				)
 
+	_apply_message_security(account, message, formatted_message)
+
 	return formatted_message
+
+
+def _apply_message_security(account: str, message: dict, formatted_message: dict) -> None:
+	"""Detect, verify and (if possible) decrypt S/MIME or OpenPGP mail.
+
+	Signed mail keeps the body Stalwart already exposed and gains a verdict;
+	encrypted mail is decrypted here and its body/attachments repopulated from
+	the decrypted inner MIME. The verdict rides on ``formatted_message`` and is
+	cached with it, so this runs once per message rather than on every read.
+	"""
+
+	from suite.mail.doctype.mail_crypto_key.mail_crypto_key import get_user_crypto_keys
+	from suite.mail.doctype.mail_peer_key.mail_peer_key import get_peer_keys, upsert_peer_key
+	from suite.mail.utils.crypto import DecryptionError, MessageSecurity, Protocol
+	from suite.mail.utils.crypto.detect import detect
+	from suite.mail.utils.crypto.mimeutil import parse_message
+
+	try:
+		raw = fetch_blob(account, message["blobId"])
+		parsed = parse_message(raw)
+		det = detect(parsed)
+	except Exception:
+		return
+
+	if not det.is_protected:
+		return
+
+	security = MessageSecurity(protocol=det.protocol, signed=det.signed, encrypted=det.encrypted)
+	user = get_user_for_jmap_account(account, allow_system_manager=False, raise_exception=False)
+
+	try:
+		if det.protocol == Protocol.SMIME:
+			_apply_smime(account, user, raw, security, get_user_crypto_keys, upsert_peer_key)
+		else:
+			_apply_pgp(
+				account, user, raw, security, formatted_message, get_user_crypto_keys, get_peer_keys, upsert_peer_key
+			)
+
+		if det.encrypted and getattr(security, "_inner", None) is not None:
+			_repopulate_from_inner(account, formatted_message, security._inner)
+	except DecryptionError as e:
+		security.errors.append(str(e))
+	except Exception as e:
+		security.errors.append(f"crypto processing failed: {e}")
+
+	formatted_message["security"] = security.to_dict()
+
+
+def _smime_trusted_roots() -> bytes | None:
+	try:
+		roots = frappe.db.get_single_value("Mail Settings", "smime_trusted_roots")
+		return roots.encode() if roots else None
+	except Exception:
+		return None
+
+
+def _apply_smime(account, user, raw, security, get_user_crypto_keys, upsert_peer_key) -> None:
+	from suite.mail.utils.crypto import Protocol, smime
+	from suite.mail.utils.crypto.detect import detect
+	from suite.mail.utils.crypto.mimeutil import parse_message
+
+	if security.encrypted:
+		decrypted = None
+		for key in (get_user_crypto_keys(user, Protocol.SMIME.value) if user else []):
+			try:
+				decrypted = smime.decrypt(raw, key.certificate, key.get_password("private_key"))
+				break
+			except Exception:
+				continue
+		if decrypted is None:
+			security.errors.append("No S/MIME key could decrypt this message.")
+			return
+
+		security._inner = parse_message(decrypted)
+		if detect(security._inner).signed:
+			res = smime.verify(decrypted, _smime_trusted_roots())
+			_record_signature(security, res, account, upsert_peer_key, Protocol.SMIME.value)
+	else:
+		res = smime.verify(raw, _smime_trusted_roots())
+		_record_signature(security, res, account, upsert_peer_key, Protocol.SMIME.value)
+
+
+def _apply_pgp(
+	account, user, raw, security, formatted_message, get_user_crypto_keys, get_peer_keys, upsert_peer_key
+) -> None:
+	from suite.mail.utils.crypto import Protocol, pgp
+	from suite.mail.utils.crypto.detect import detect
+	from suite.mail.utils.crypto.mimeutil import parse_message
+
+	from_email = (formatted_message.get("from_email") or "").lower()
+
+	if security.encrypted:
+		decrypted = None
+		for key in (get_user_crypto_keys(user, Protocol.PGP.value) if user else []):
+			try:
+				decrypted, sig = pgp.decrypt(raw, key.get_password("private_key"))
+				break
+			except Exception:
+				continue
+		if decrypted is None:
+			security.errors.append("No PGP key could decrypt this message.")
+			return
+
+		security._inner = parse_message(decrypted)
+		if detect(security._inner).signed:
+			res = pgp.verify(decrypted, get_peer_keys(account, from_email, Protocol.PGP.value))
+			_record_signature(security, res, account, upsert_peer_key, Protocol.PGP.value)
+	else:
+		res = pgp.verify(raw, get_peer_keys(account, from_email, Protocol.PGP.value))
+		_record_signature(security, res, account, upsert_peer_key, Protocol.PGP.value)
+
+
+def _record_signature(security, res, account, upsert_peer_key, protocol) -> None:
+	security.signed = True
+	security.signature_valid = res.valid
+	security.trusted = res.trusted
+	security.signer = res.signer
+	security.signer_name = res.signer_name
+	security.signer_fingerprint = res.signer_fingerprint
+	security.errors.extend(res.errors)
+
+	if res.valid and res.signer and res.signer_public_material and res.signer_fingerprint:
+		try:
+			upsert_peer_key(account, res.signer, protocol, res.signer_public_material, res.signer_fingerprint)
+		except Exception:
+			pass
+
+
+def _repopulate_from_inner(account: str, formatted_message: dict, inner) -> None:
+	"""Fill body and attachments from decrypted inner MIME; serve attachments locally."""
+
+	import hashlib
+
+	try:
+		html_part = inner.get_body(preferencelist=("html",))
+		text_part = inner.get_body(preferencelist=("plain",))
+	except Exception:
+		html_part = text_part = None
+
+	if html_part is not None:
+		formatted_message["html_body"] = html_part.get_content()
+	if text_part is not None:
+		formatted_message["text_body"] = text_part.get_content()
+
+	blobs: dict[str, bytes] = {}
+	attachments = list(formatted_message.get("attachments") or [])
+	for part in inner.iter_attachments():
+		content = part.get_content()
+		if isinstance(content, str):
+			content = content.encode("utf-8", "ignore")
+		synthetic_id = "smime-" + hashlib.sha256(content).hexdigest()[:40]
+		blobs[synthetic_id] = content
+
+		cid = (part.get("Content-ID") or "").strip("<>") or random_string(10)
+		filename = part.get_filename()
+		disposition = "inline" if part.get_content_disposition() == "inline" else "attachment"
+		url = f"/api/method/suite.mail.api.mail.get_attachment?account={account}&blob_id={synthetic_id}"
+		if filename:
+			url += f"&filename={quote(filename)}"
+
+		attachments.append(
+			{
+				"part_id": None,
+				"blob_id": synthetic_id,
+				"size": len(content),
+				"filename": filename,
+				"type": part.get_content_type(),
+				"charset": part.get_content_charset(),
+				"disposition": disposition,
+				"cid": cid,
+				"language": "None",
+				"location": None,
+				"url": url,
+			}
+		)
+
+		if disposition == "inline" and formatted_message.get("html_body"):
+			soup = BeautifulSoup(formatted_message["html_body"], "html.parser")
+			for img in soup.find_all("img", src=f"cid:{cid}"):
+				img["data-cid"] = cid
+				img["src"] = url
+			formatted_message["html_body"] = str(soup)
+
+	if blobs:
+		_cache_blobs(account, blobs)
+	formatted_message["attachments"] = attachments
+	if any(a.get("disposition") == "attachment" for a in attachments):
+		formatted_message["has_attachment"] = 1
+
+	if formatted_message.get("html_body"):
+		formatted_message["preview"] = convert_html_to_text(formatted_message["html_body"])[:PREVIEW_MAX_LENGTH]
+	elif formatted_message.get("text_body"):
+		formatted_message["preview"] = clean_text(formatted_message["text_body"])[:PREVIEW_MAX_LENGTH]
 
 
 def _get_total_cache_key(account: str) -> str:
