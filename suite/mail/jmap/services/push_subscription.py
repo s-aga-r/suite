@@ -1,6 +1,6 @@
 from typing import ClassVar
 
-from suite.mail.jmap.connection import JMAPConnection
+from suite.mail.jmap.client import JMAPConnection
 from suite.mail.jmap.services.core import CoreService
 
 

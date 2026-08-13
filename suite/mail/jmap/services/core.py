@@ -5,7 +5,7 @@ from typing import Any, ClassVar, Literal
 
 from cachetools import TTLCache
 
-from suite.mail.jmap.connection import JMAPConnection
+from suite.mail.jmap.client import JMAPConnection
 
 
 class CoreServiceHelper:

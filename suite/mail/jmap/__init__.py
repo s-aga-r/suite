@@ -6,7 +6,8 @@ from frappe.utils import cint
 from frappe.utils.caching import request_cache
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap.connection import JMAPConnection, JMAPConnectionInfo, JMAPSessionManager
+from suite.mail.jmap.client import JMAPConnection
+from suite.mail.jmap.connection import JMAPConnectionInfo, JMAPSessionManager
 from suite.mail.jmap.services.blob.blob import BlobService
 from suite.mail.jmap.services.calendars.calendar import CalendarService
 from suite.mail.jmap.services.calendars.calendar_event import CalendarEventService

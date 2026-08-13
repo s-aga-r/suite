@@ -12,7 +12,7 @@ import frappe
 import requests
 from frappe.tests import IntegrationTestCase
 
-from suite.mail.jmap.connection import JMAPConnection
+from suite.mail.jmap.client import JMAPConnection
 from suite.mail.stalwart.connection import MANAGEMENT_SESSION_CACHE_KEY
 from suite.mail.utils import get_config, is_stalwart_configured
 
