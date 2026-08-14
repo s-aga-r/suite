@@ -8,7 +8,9 @@ from frappe.model.document import Document
 from frappe.utils import cint
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_calendar_event_notification_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.calendars import get_event_notifications as get_jmap_event_notifications
+from suite.mail.jmap.calendars import query_event_notifications
 from suite.mail.utils.dt import normalize_utc_z
 from suite.utils import parse_filters
 
@@ -132,8 +134,7 @@ def fetch_event_notifications(
     """Returns a list of event notifications and total count based on the provided filter."""
 
     notifications = []
-    service = get_calendar_event_notification_service(account)
-    data = service.query(filter, position, limit, sort)
+    data = query_event_notifications(get_context(account), filter, position, limit, sort)
 
     ids = data.get("ids", [])
     total = data.get("total", 0)
@@ -147,10 +148,8 @@ def fetch_event_notifications(
 def get_event_notifications(account: str, ids: list[str]) -> list[dict]:
     """Returns a list of event notifications for the specified account and IDs."""
 
-    service = get_calendar_event_notification_service(account)
-
     notifications = {}
-    for notification in service.get(ids):
+    for notification in get_jmap_event_notifications(get_context(account), ids):
         notification = format_event_notification(account, notification)
         notifications[notification["id"]] = notification
 
@@ -161,8 +160,7 @@ def get_event_notifications(account: str, ids: list[str]) -> list[dict]:
 def delete_event_notifications(account: str, ids: list[str]) -> None:
     """Deletes event notifications for the specified account and ID(s)."""
 
-    service = get_calendar_event_notification_service(account)
-    response = service.delete(ids)
+    response = get_context(account).destroy("CalendarEventNotification", ids)
 
     if response.get("notDestroyed"):
         error_messages = []

@@ -10,7 +10,10 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_mailbox_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.context import batch_dict
+from suite.mail.jmap.mail import create_mailboxes, update_mailboxes
+from suite.mail.jmap.mail import delete_mailboxes as _delete_mailboxes
 from suite.utils import parse_filters
 
 DEFAULT_MAILBOX_GAP = 1000
@@ -162,12 +165,12 @@ def add_mailbox(
         "is_subscribed": subscribed,
     }
 
-    service = get_mailbox_service(account)
-    response = service.create([mailbox])
+    ctx = get_context(account)
+    response = create_mailboxes(ctx, [mailbox])
 
     title = _("Mailbox Creation Error")
     if response.get("created"):
-        service.invalidate_cache(service.account, key="mailboxes")
+        ctx.invalidate_cache(ctx.account, key="mailboxes")
         return response["created"][creation_id]["id"]
     elif response.get("notCreated"):
         frappe.throw(_(response["notCreated"][creation_id]["description"]), title=title)
@@ -179,8 +182,8 @@ def add_mailbox(
 def get_mailbox(account: str, id: str, raise_exception: bool = False) -> dict | None:
     """Returns mailbox details for the given account and id."""
 
-    service = get_mailbox_service(account)
-    if mailboxes := service.get([id]):
+    ctx = get_context(account)
+    if mailboxes := ctx.get_all("Mailbox", [id]):
         return format_mailbox(account, mailboxes[0])
 
     if raise_exception:
@@ -215,8 +218,8 @@ def update_mailbox(
         "is_subscribed": subscribed,
     }
 
-    service = get_mailbox_service(account)
-    response = service.update([mailbox])
+    ctx = get_context(account)
+    response = update_mailboxes(ctx, [mailbox])
 
     if not response.get("updated"):
         if response.get("notUpdated"):
@@ -224,15 +227,15 @@ def update_mailbox(
         else:
             frappe.throw(_(response["description"]), title=title)
 
-    service.invalidate_cache(service.account, key="mailboxes")
+    ctx.invalidate_cache(ctx.account, key="mailboxes")
 
 
 @frappe.whitelist()
 def delete_mailboxes(account: str, ids: list[str], remove_emails: bool = True) -> None:
     """Deletes a mailbox for the given account by its ID."""
 
-    service = get_mailbox_service(account)
-    response = service.delete(ids, remove_emails=remove_emails)
+    ctx = get_context(account)
+    response = _delete_mailboxes(ctx, ids, remove_emails=remove_emails)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -244,15 +247,15 @@ def delete_mailboxes(account: str, ids: list[str], remove_emails: bool = True) -
         )
 
     # Drop the stale list so later lookups (e.g. sieve regeneration) don't see the deleted mailbox.
-    service.invalidate_cache(service.account, key="mailboxes")
+    ctx.invalidate_cache(ctx.account, key="mailboxes")
 
 
 @frappe.whitelist()
 def fetch_mailboxes(account: str, page: int = 1, limit: int = 10) -> list:
     """Returns a list of mailboxes for the given account."""
 
-    service = get_mailbox_service(account)
-    mailboxes = service.get()
+    ctx = get_context(account)
+    mailboxes = ctx.get_all("Mailbox")
     formatted_mailboxes = [format_mailbox(account, mailbox) for mailbox in mailboxes]
     sorted_mailboxes = sorted(
         formatted_mailboxes, key=lambda m: (m["sort_order"], get_sort_order(m["role"]), m["_name"], m["id"])
@@ -344,16 +347,16 @@ def update_mailbox_position(
 
         return updates
 
-    service = get_mailbox_service(account)
+    ctx = get_context(account)
     mailboxes = sorted(
-        service.get(), key=lambda m: (m["sortOrder"], get_sort_order(m["role"]), m["name"], m["id"])
+        ctx.get_all("Mailbox"), key=lambda m: (m["sortOrder"], get_sort_order(m["role"]), m["name"], m["id"])
     )
     updates = get_updates(mailboxes, target_mailbox_id, prior_mailbox_id)
 
     result = {"updated": [], "notUpdated": {}}
-    for batch in service.batch_dict(updates, service.max_objects_in_set):
-        body = service.call(
-            f"{service.type}/set",
+    for batch in batch_dict(updates, ctx.limits.max_objects_in_set):
+        body = ctx.call(
+            "Mailbox/set",
             {"update": {k: {"sortOrder": v} for k, v in batch.items()}},
         )
 

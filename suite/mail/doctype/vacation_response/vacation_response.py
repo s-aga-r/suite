@@ -14,7 +14,7 @@ from suite.mail.doctype.sieve_script.sieve_script import (
     set_last_active_sieve_script_id,
 )
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_vacation_response_service
+from suite.mail.jmap import JMAPContext, get_context
 from suite.mail.utils.dt import normalize_utc_z
 from suite.utils import convert_html_to_text
 
@@ -85,8 +85,7 @@ class VacationResponse(Document):
 def get_vacation_response(account: str) -> dict:
     """Returns the vacation response settings for the given account."""
 
-    service = get_vacation_response_service(account)
-    vr = service.get()
+    vr = _get_vacation_response(get_context(account))
     return format_vacation_response(account, vr)
 
 
@@ -115,17 +114,20 @@ def update_vacation_response(
 
     current_active_sieve_script_id = get_active_sieve_script_id(account)
 
-    service = get_vacation_response_service(account)
-    previous_vacation_response = service.get()
-    vacation_update_result = service.update(
+    ctx = get_context(account)
+    previous_vacation_response = _get_vacation_response(ctx)
+    vacation_update_result = ctx.update(
+        "VacationResponse",
         {
-            "is_enabled": bool(enabled),
-            "from_date": from_date,
-            "to_date": to_date,
-            "subject": subject,
-            "text_body": text_body,
-            "html_body": html_body,
-        }
+            "singleton": {
+                "isEnabled": bool(enabled),
+                "fromDate": from_date,
+                "toDate": to_date,
+                "subject": subject,
+                "textBody": text_body,
+                "htmlBody": html_body,
+            }
+        },
     )
 
     if vacation_update_result.get("updated"):
@@ -134,6 +136,13 @@ def update_vacation_response(
                 set_last_active_sieve_script_id(account, current_active_sieve_script_id)
         else:
             activate_last_active_sieve_script(account)
+
+
+def _get_vacation_response(ctx: JMAPContext) -> dict:
+    """Returns the account's singleton VacationResponse object, or {} when the server has none."""
+
+    vacation_responses = ctx.get_all("VacationResponse")
+    return vacation_responses[0] if vacation_responses else {}
 
 
 def format_vacation_response(account: str, vr: dict) -> dict:

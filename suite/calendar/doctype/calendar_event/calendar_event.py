@@ -22,8 +22,16 @@ from suite.calendar.doctype.calendar_event.invitations import (
 )
 from suite.calendar.doctype.calendar_event.mailing_lists import expand_mailing_list_participants
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_calendar_event_service, get_jmap_connection
-from suite.mail.jmap.services.calendars.calendar_event import CalendarEventService
+from suite.mail.jmap import JMAPContext, get_context, get_jmap_connection
+from suite.mail.jmap.calendars import (
+    create_calendar_events,
+    delete_event_instance,
+    get_base_event_ids,
+    query_calendar_events,
+    update_calendar_events,
+    update_event_instance,
+)
+from suite.mail.jmap.calendars import delete_calendar_events as delete_jmap_calendar_events
 from suite.mail.utils import log_mail_error
 from suite.mail.utils.dt import normalize_utc_z
 from suite.mail.utils.logger import get_push_logger
@@ -226,7 +234,7 @@ class CalendarEvent(Document):
         if self.get("recurrence_id") and self.get("uid"):
             # delete_instance needs the master event's JMAP id. uid is the iCalendar UID, which
             # the server never resolves, so passing it made every instance delete raise.
-            master_id = get_calendar_event_service(account).get_base_event_ids([id]).get(id, id)
+            master_id = get_base_event_ids(get_context(account), [id]).get(id, id)
             delete_calendar_event_instance(account, master_id, self.recurrence_id)
         else:
             delete_calendar_events(account, [id])
@@ -402,9 +410,10 @@ def add_calendar_event(
         and acting_as_organizer(account, organizer)
     )
 
-    service = get_calendar_event_service(account)
-    response = service.create(
-        [event], send_scheduling_messages=send_scheduling_messages and not use_custom_invites
+    response = create_calendar_events(
+        get_context(account),
+        [event],
+        send_scheduling_messages=send_scheduling_messages and not use_custom_invites,
     )
 
     title = _("Calendar Event Creation Error")
@@ -432,8 +441,9 @@ def fetch_calendar_events(
     """Returns a list of calendar events for the given account based on the provided filters."""
 
     calendar_events = []
-    service = get_calendar_event_service(account)
-    data = service.query(filter, position, limit, sort, time_zone, expand_recurrences)
+    data = query_calendar_events(
+        get_context(account), filter, position, limit, sort, time_zone, expand_recurrences
+    )
 
     ids = data.get("ids", [])
     total = data.get("total", 0)
@@ -447,11 +457,11 @@ def fetch_calendar_events(
 def get_calendar_events(account: str, ids: list[str]) -> list[dict]:
     """Returns a list of calendar events for the specified account and IDs."""
 
-    service = get_calendar_event_service(account)
-    calendar_map = {c["id"]: c for c in service.calendars}
+    ctx = get_context(account)
+    calendar_map = {c["id"]: c for c in ctx.calendars}
 
     events = {}
-    for event in service.get(ids):
+    for event in ctx.get_all("CalendarEvent", ids):
         event = format_calendar_event(account, calendar_map, event)
         events[event["id"]] = event
 
@@ -520,9 +530,10 @@ def update_calendar_event(
     if use_custom_invites:
         previous_emails, event["sequence"] = _previous_invite_state(account, id)
 
-    service = get_calendar_event_service(account)
-    response = service.update(
-        [event], send_scheduling_messages=send_scheduling_messages and not use_custom_invites
+    response = update_calendar_events(
+        get_context(account),
+        [event],
+        send_scheduling_messages=send_scheduling_messages and not use_custom_invites,
     )
 
     title = _("Calendar Event Update Error")
@@ -560,8 +571,8 @@ def update_calendar_event_instance(
         if use_custom_invites:
             next_sequence = cint(event.get("sequence") if event else 0) + 1
 
-    service = get_calendar_event_service(account)
-    response = service.update_instance(
+    response = update_event_instance(
+        get_context(account),
         master_id,
         recurrence_id,
         patch,
@@ -585,26 +596,32 @@ def update_calendar_event_instance(
 def delete_calendar_events(account: str, ids: list[str], send_scheduling_messages: bool = False) -> None:
     """Deletes a calendar event for the given account by its ID."""
 
-    service = get_calendar_event_service(account)
+    ctx = get_context(account)
 
     use_custom_invites = send_scheduling_messages and custom_event_invites_enabled()
 
     # Snapshot organizer-owned events (with other participants) before deletion so we can send our
     # own cancellations for them.
-    snapshots = _cancellable_snapshots(account, service, ids) if use_custom_invites else []
+    snapshots = _cancellable_snapshots(account, ctx, ids) if use_custom_invites else []
     custom_ids = {snapshot["id"] for snapshot in snapshots}
 
     # Suppress the JMAP server's own scheduling ONLY for the events we cancel ourselves. Anything
     # the acting account does not organize keeps server scheduling on, so a non-organizer's delete
     # still notifies the organizer instead of being silently dropped.
     if custom_ids:
-        _raise_if_not_destroyed(service.delete(list(custom_ids), send_scheduling_messages=False))
+        _raise_if_not_destroyed(
+            delete_jmap_calendar_events(ctx, list(custom_ids), send_scheduling_messages=False)
+        )
         if remaining := [id for id in ids if id not in custom_ids]:
             _raise_if_not_destroyed(
-                service.delete(remaining, send_scheduling_messages=send_scheduling_messages)
+                delete_jmap_calendar_events(
+                    ctx, remaining, send_scheduling_messages=send_scheduling_messages
+                )
             )
     else:
-        _raise_if_not_destroyed(service.delete(ids, send_scheduling_messages=send_scheduling_messages))
+        _raise_if_not_destroyed(
+            delete_jmap_calendar_events(ctx, ids, send_scheduling_messages=send_scheduling_messages)
+        )
 
     for snapshot in snapshots:
         _enqueue_event_notification(account, "cancel", event_snapshot=snapshot)
@@ -617,17 +634,17 @@ def delete_calendar_event_instance(
 ) -> None:
     """Deletes a specific instance of a recurring calendar event based on its master ID and recurrence ID."""
 
-    service = get_calendar_event_service(account)
+    ctx = get_context(account)
 
     snapshot = None
     if send_scheduling_messages and custom_event_invites_enabled():
-        if snapshots := _cancellable_snapshots(account, service, [master_id]):
+        if snapshots := _cancellable_snapshots(account, ctx, [master_id]):
             snapshot = snapshots[0]
 
     # Suppress the server's own scheduling only when we send a custom cancel for this
     # (organizer-owned) instance; otherwise let the server notify so nothing is dropped.
-    response = service.delete_instance(
-        master_id, recurrence_id, send_scheduling_messages=send_scheduling_messages and snapshot is None
+    response = delete_event_instance(
+        ctx, master_id, recurrence_id, send_scheduling_messages=send_scheduling_messages and snapshot is None
     )
 
     title = _("Calendar Event Instance Deletion Error")
@@ -784,9 +801,9 @@ def send_event_alert_notification(user: str, alert: dict, ctx: dict | None = Non
             logger.debug("push-notifications-disabled")
             return
 
-        service = CalendarEventService(account, get_jmap_connection(user))
+        jmap_ctx = JMAPContext(get_jmap_connection(user), account)
 
-        events = service.get([event_id])
+        events = jmap_ctx.get_all("CalendarEvent", [event_id])
         if not events:
             logger.warning("calendar-alert-event-not-found")
             return
@@ -881,7 +898,7 @@ def _previous_invite_state(account: str, id: str) -> tuple[list[str], int]:
     return emails, cint(event.get("sequence")) + 1
 
 
-def _cancellable_snapshots(account: str, service, ids: list[str]) -> list[dict]:
+def _cancellable_snapshots(account: str, ctx: JMAPContext, ids: list[str]) -> list[dict]:
     """Returns raw event snapshots the acting organizer should send cancellations for.
 
     Skips events the acting account doesn't organize, and events with no participants other
@@ -892,7 +909,7 @@ def _cancellable_snapshots(account: str, service, ids: list[str]) -> list[dict]:
         return []
 
     snapshots = []
-    for event in service.get(ids):
+    for event in ctx.get_all("CalendarEvent", ids):
         organizer = (event.get("organizerCalendarAddress") or "").lower().replace("mailto:", "")
         if not acting_as_organizer(account, organizer):
             continue

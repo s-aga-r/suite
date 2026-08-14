@@ -10,7 +10,14 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_address_book_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.contacts import (
+    create_address_books,
+    update_address_books,
+)
+from suite.mail.jmap.contacts import (
+    delete_address_books as _delete_address_books,
+)
 from suite.utils import parse_filters
 
 
@@ -168,8 +175,7 @@ def add_address_book(
         "is_subscribed": subscribed,
     }
 
-    service = get_address_book_service(account)
-    response = service.create([address_book])
+    response = create_address_books(get_context(account), [address_book])
 
     title = _("Address Book Creation Error")
     if response.get("created"):
@@ -184,8 +190,7 @@ def add_address_book(
 def get_address_book(account: str, id: str, raise_exception: bool = True) -> dict | None:
     """Returns address book details for the given account and id."""
 
-    service = get_address_book_service(account)
-    if address_books := service.get([id]):
+    if address_books := get_context(account).get_all("AddressBook", [id]):
         return format_address_book(account, address_books[0])
 
     if raise_exception:
@@ -218,8 +223,7 @@ def update_address_book(
         "is_subscribed": subscribed,
     }
 
-    service = get_address_book_service(account)
-    response = service.update([address_book])
+    response = update_address_books(get_context(account), [address_book])
 
     title = _("Address Book Update Error")
     if not response.get("updated"):
@@ -233,8 +237,7 @@ def update_address_book(
 def delete_address_books(account: str, ids: list[str]) -> None:
     """Deletes address books for the given account and list of address book IDs."""
 
-    service = get_address_book_service(account)
-    response = service.delete(ids, remove_contents=True)
+    response = _delete_address_books(get_context(account), ids, remove_contents=True)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -250,8 +253,7 @@ def delete_address_books(account: str, ids: list[str]) -> None:
 def fetch_address_books(account: str, page: int = 1, limit: int = 10) -> list:
     """Returns a list of address books for the given account."""
 
-    service = get_address_book_service(account)
-    address_books = service.get()
+    address_books = get_context(account).get_all("AddressBook")
     formatted_address_books = [format_address_book(account, book) for book in address_books]
     sorted_address_books = sorted(formatted_address_books, key=lambda x: x["sort_order"])
     frappe.cache.set_value(_get_total_cache_key(account), len(address_books), expires_in_sec=600)

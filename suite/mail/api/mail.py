@@ -56,12 +56,12 @@ from suite.mail.doctype.user_account.user_account import (
     is_jmap_account_belongs_to_user,
 )
 from suite.mail.jmap import (
-    get_email_service,
-    get_email_submission_service,
+    get_context,
     get_mailbox_id_by_name,
     get_mailbox_id_by_role,
-    get_mailbox_service,
 )
+from suite.mail.jmap.mail import get_email_suggestions as get_jmap_email_suggestions
+from suite.mail.jmap.mail import get_submissions, query_emails
 from suite.mail.store import get_email_address_index
 from suite.mail.utils import get_config, log_mail_error
 from suite.mail.utils.delivery_status import parse_delivery_status
@@ -249,7 +249,7 @@ def get_threads(account: str, mailbox: str, limit: int, start: int = 0, filter_b
 
     # Four roles are needed below, so they come off one cached mailbox list rather than a lookup each:
     # every `get_mailbox_id_by_role` resolves the account's user and connection again on the way in.
-    ids_by_role = {(m.get("role") or "").lower(): m["id"] for m in get_mailbox_service(account).mailboxes}
+    ids_by_role = {(m.get("role") or "").lower(): m["id"] for m in get_context(account).mailboxes}
     trash_mailbox = ids_by_role.get("trash")
     junk_mailbox = ids_by_role.get("junk")
     # Sent and Drafts are about the message you wrote, so their rows follow the latest message in the
@@ -380,14 +380,13 @@ def get_all_inbox_unread_count() -> int:
     """Returns the total unread Inbox thread count across all of the user's accounts (sidebar badge).
 
     Mailbox is a JMAP-backed virtual DocType, so it can't be queried across accounts with a table
-    filter. Each account's Inbox unread count is fetched live via the mailbox service (a fresh
-    Mailbox/get, bypassing the 1-hour `.mailboxes` cache) — the same source the per-account inbox
-    badge uses — and summed.
+    filter. Each account's Inbox unread count is fetched live via a fresh Mailbox/get (bypassing
+    the 1-hour `.mailboxes` cache) — the same source the per-account inbox badge uses — and summed.
     """
 
     total = 0
     for account in get_user_jmap_accounts():
-        for mailbox in get_mailbox_service(account["name"]).get():
+        for mailbox in get_context(account["name"]).get_all("Mailbox"):
             if (mailbox.get("role") or "").lower() == "inbox":
                 total += cint(mailbox.get("unreadThreads"))
                 break
@@ -789,10 +788,10 @@ def get_scheduled_mails(account: str) -> list[dict]:
 
     # Lazy reconcile via EmailSubmission/get — EmailSubmission/query returns empty on Stalwart
     # even for pending submissions, so the queue rows are the source of truth for listing.
-    service = get_email_submission_service(account)
     submission_ids = [row.submission_id for row in rows if row.submission_id]
     undo_by_id = {
-        s["id"]: s.get("undoStatus") for s in (service.get(submission_ids) if submission_ids else [])
+        s["id"]: s.get("undoStatus")
+        for s in (get_submissions(get_context(account), submission_ids) if submission_ids else [])
     }
 
     result, submitted, cancelled = [], [], []
@@ -1220,7 +1219,7 @@ def get_email_suggestions(account: str, text: str, limit: int = 10) -> list[dict
     if not suggestions:
         suggestions = [
             {"name": None, "email": email}
-            for email in get_email_service(account).get_email_suggestions(text, limit=limit)
+            for email in get_jmap_email_suggestions(get_context(account), text, limit=limit)
         ]
 
     suggestions = suggestions[:limit]
@@ -1493,9 +1492,9 @@ def _screening_message_ids(account: str, from_email: str | None = None) -> list[
         conditions.append({"from": from_email})
     filter = conditions[0] if len(conditions) == 1 else {"operator": "AND", "conditions": conditions}
 
-    service = get_email_service(account)
+    ctx = get_context(account)
 
-    return service.query(filter, limit=service.max_objects_in_get).get("ids", [])
+    return query_emails(ctx, filter, limit=ctx.limits.max_objects_in_get).get("ids", [])
 
 
 @frappe.whitelist()

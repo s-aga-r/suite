@@ -3,7 +3,7 @@ import hashlib
 import frappe
 from frappe.utils.caching import request_cache
 
-from suite.mail.jmap.connection import JMAPConnection, JMAPConnectionInfo, JMAPSessionManager
+from suite.mail.stalwart.transport import JMAPConnection, JMAPConnectionInfo, JMAPSessionManager
 from suite.mail.utils import get_config, is_stalwart_configured
 
 # Cache key under which the discovered management JMAP session is stored.

@@ -239,11 +239,12 @@ class TestCalendarInvitesRsvp(StalwartIntegrationTestCase):
             uid = get_events_by_ids(self.organizer_account, [event_id])[0]["uid"]
 
         # Simulate the attendee having received the invite: a same-uid copy on their calendar.
-        from suite.mail.jmap import get_calendar_event_service
+        from suite.mail.jmap import get_context
+        from suite.mail.jmap.calendars import create_calendar_events
 
         with self.set_user(self.attendee.email):
-            service = get_calendar_event_service(self.attendee_account)
-            response = service.create(
+            response = create_calendar_events(
+                get_context(self.attendee_account),
                 [
                     {
                         "creation_id": "copy",

@@ -34,7 +34,7 @@ from suite.calendar.doctype.calendar_exchange.calendar_exchange import (
 )
 from suite.mail.doctype.mail_queue.mail_queue import MailQueue
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_calendar_event_service, get_participant_identities
+from suite.mail.jmap import get_context, get_participant_identities
 from suite.utils import log_error
 from suite.utils.dt import get_utc_now
 
@@ -110,7 +110,7 @@ def notify_participants(
 
     event = event_snapshot
     if event is None:
-        events = get_calendar_event_service(account).get([event_id])
+        events = get_context(account).get_all("CalendarEvent", [event_id])
         if not events:
             return
         event = events[0]
@@ -158,7 +158,7 @@ def notify_organizer_of_response(account: str, event_id: str, participant_email:
     original_user = frappe.session.user
     frappe.set_user(owner)
     try:
-        events = get_calendar_event_service(account).get([event_id])
+        events = get_context(account).get_all("CalendarEvent", [event_id])
         if not events:
             return
         event = events[0]
@@ -202,7 +202,7 @@ def notify_organizer_of_reply(account: str, event_id: str, responder_email: str,
         return
 
     try:
-        events = get_calendar_event_service(account).get([event_id])
+        events = get_context(account).get_all("CalendarEvent", [event_id])
         if not events:
             return
         event = events[0]

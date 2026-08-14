@@ -31,10 +31,21 @@ from frappe.utils import (
 
 from suite.mail.doctype.user_account.user_account import is_jmap_account_belongs_to_user
 from suite.mail.jmap import (
-    get_email_service,
-    get_email_submission_service,
+    JMAPContext,
+    get_context,
     get_identities,
     get_jmap_connection,
+)
+from suite.mail.jmap.mail import (
+    cancel_submission,
+    create_emails,
+    get_emails,
+    get_mailbox_id_by_role,
+    get_submissions,
+    max_delayed_send,
+    query_emails,
+    resubmit_submission,
+    update_emails,
 )
 from suite.mail.jmap.models import (
     EmailAddress,
@@ -43,8 +54,6 @@ from suite.mail.jmap.models import (
     EmailHeader,
     EmailRecipient,
 )
-from suite.mail.jmap.services.mail.email import EmailService
-from suite.mail.jmap.services.mail.mailbox import MailboxService
 from suite.mail.utils import get_config, log_mail_error
 from suite.mail.utils.dt import parsedate_to_datetime
 from suite.mail.utils.user import is_jmap_configured
@@ -473,7 +482,7 @@ class MailQueue(OwnerFromUser, Document):
 
         max_delay = 2_592_000
         try:
-            max_delay = get_email_submission_service(self.account).max_delayed_send
+            max_delay = max_delayed_send(get_context(self.account))
         except Exception:
             pass  # best-effort; the server enforces its own limit at submission
 
@@ -673,8 +682,8 @@ class MailQueue(OwnerFromUser, Document):
 
         if self.in_reply_to and not self.in_reply_to_id:
             try:
-                service = get_email_service(self.account)
-                result = service.query({"header": ["Message-ID", self.in_reply_to]})
+                ctx = get_context(self.account)
+                result = query_emails(ctx, {"header": ["Message-ID", self.in_reply_to]})
                 if ids := result["ids"]:
                     self.in_reply_to_id = ids[0]
             except Exception:
@@ -698,8 +707,8 @@ class MailQueue(OwnerFromUser, Document):
             return
 
         try:
-            service = get_email_service(self.account)
-            emails = service.get([self.forwarded_from_id], properties=["messageId"])
+            ctx = get_context(self.account)
+            emails = get_emails(ctx, [self.forwarded_from_id], properties=["messageId"])
             # JMAP returns messageId as a list of Message-ID strings (RFC 5322 msg-id values).
             if emails and (message_ids := emails[0].get("messageId")):
                 self.in_reply_to = message_ids[0].strip("<>")
@@ -753,14 +762,14 @@ class MailQueue(OwnerFromUser, Document):
 
         from suite.mail.jmap import get_jmap_set_error_message
 
-        connection = get_jmap_connection(self.user)
-        email_service = EmailService(self.account, connection)
-        drafts_mailbox_id = MailboxService(self.account, connection).get_mailbox_id_by_role(
-            "drafts", create_if_not_exists=True, raise_exception=True
+        ctx = JMAPContext(get_jmap_connection(self.user), self.account)
+        drafts_mailbox_id = get_mailbox_id_by_role(
+            ctx, "drafts", create_if_not_exists=True, raise_exception=True
         )
 
         # Replace (not patch) mailboxIds so the message leaves Sent; restore $draft.
-        result = email_service.update(
+        result = update_emails(
+            ctx,
             [{"id": self.id, "mailbox_ids": {drafts_mailbox_id: True}, "keywords": {"$draft": True}}],
             replace_mailboxes=True,
         )
@@ -820,12 +829,12 @@ class MailQueue(OwnerFromUser, Document):
         if not self.submission_id:
             return  # an earlier resubmit failed after canceling; nothing left to cancel
 
-        service = get_email_submission_service(self.account)
-        submissions = service.get([self.submission_id])
+        ctx = get_context(self.account)
+        submissions = get_submissions(ctx, [self.submission_id])
         undo_status = submissions[0].get("undoStatus") if submissions else "final"
 
         if undo_status == "pending":
-            service.cancel(self.submission_id)
+            cancel_submission(ctx, self.submission_id)
         elif undo_status != "canceled":
             self._db_set(notify=True, status="Submitted", submitted_at=now())
             frappe.throw(_("This email has already been delivered and can no longer be changed."))
@@ -833,10 +842,11 @@ class MailQueue(OwnerFromUser, Document):
     def _resubmit(self, hold_until: int | None) -> None:
         """Creates a replacement submission for the (already canceled) previous one."""
 
-        service = get_email_submission_service(self.account)
+        ctx = get_context(self.account)
 
         try:
-            created = service.resubmit(
+            created = resubmit_submission(
+                ctx,
                 email_id=self.id,
                 from_email=self.from_email,
                 rcpt_emails=[r["email"].lower() for r in json_loads(self.recipients, default=[])],
@@ -883,15 +893,13 @@ class MailQueue(OwnerFromUser, Document):
         kwargs = {}
 
         try:
-            connection = get_jmap_connection(self.user)
-            email_service = EmailService(self.account, connection)
-            mailbox_service = MailboxService(self.account, connection)
+            ctx = JMAPContext(get_jmap_connection(self.user), self.account)
 
-            draft_mailbox_id = mailbox_service.get_mailbox_id_by_role(
-                "drafts", create_if_not_exists=True, raise_exception=True
+            draft_mailbox_id = get_mailbox_id_by_role(
+                ctx, "drafts", create_if_not_exists=True, raise_exception=True
             )
-            sent_mailbox_id = mailbox_service.get_mailbox_id_by_role(
-                "sent", create_if_not_exists=True, raise_exception=True
+            sent_mailbox_id = get_mailbox_id_by_role(
+                ctx, "sent", create_if_not_exists=True, raise_exception=True
             )
 
             headers: list[EmailHeader] = []
@@ -915,7 +923,7 @@ class MailQueue(OwnerFromUser, Document):
                         file = MailQueue._get_file(file_url=a["file_url"], check_permission=False)
                         content = file.get_content()
                         content_type = guess_type(file.file_name)[0]
-                        blob = email_service.upload_blob(content, content_type)
+                        blob = ctx.upload_blob(content, content_type)
                         a.update({"type": blob["type"], "size": blob["size"], "blob_id": blob["blobId"]})
                     _attachments.append(a)
 
@@ -960,7 +968,7 @@ class MailQueue(OwnerFromUser, Document):
                 hold_until=self._hold_until,
             )
 
-            response = email_service.create([email])
+            response = create_emails(ctx, [email])
 
             kwargs.update({"status": "Failed", "_response": json.dumps(response)})
             if data := response["methodResponses"][0][1].get("created", {}).get(f"draft-{self.name}"):
@@ -1171,9 +1179,10 @@ def reconcile_scheduled_emails() -> None:
 
     for account, account_rows in by_account.items():
         try:
-            service = get_email_submission_service(account, ignore_permissions=True)
+            ctx = get_context(account, ignore_permissions=True)
             undo_by_id = {
-                s["id"]: s.get("undoStatus") for s in service.get([r.submission_id for r in account_rows])
+                s["id"]: s.get("undoStatus")
+                for s in get_submissions(ctx, [r.submission_id for r in account_rows])
             }
         except Exception:
             log_mail_error(_("Failed - Reconcile Scheduled Emails"), frappe.get_traceback(with_context=True))

@@ -8,33 +8,33 @@ import unittest
 from unittest import mock
 
 from suite.mail.doctype.mail_message import mail_message
-from suite.mail.jmap.services.mail.email import EmailService
+from suite.mail.jmap.context import JMAPContext
 
 FORBIDDEN = {"type": "forbidden", "description": "You are not authorized to perform this action"}
 
 
-class EmailServiceChanges(unittest.TestCase):
-    """``EmailService.changes`` — unwrap real results, raise on method-level errors."""
+class JMAPContextChanges(unittest.TestCase):
+    """``JMAPContext.changes`` — unwrap real results, raise on method-level errors."""
 
-    def _service(self, body: dict) -> EmailService:
-        service = EmailService("f7", mock.MagicMock())
-        service._call_one = mock.MagicMock(return_value=body)
-        return service
+    def _context(self, body: dict) -> JMAPContext:
+        ctx = JMAPContext(mock.MagicMock(), "f7")
+        ctx.call = mock.MagicMock(return_value=body)
+        return ctx
 
     def test_returns_method_response_body(self):
         body = {"created": [], "updated": ["e1"], "destroyed": [], "newState": "s2", "hasMoreChanges": False}
-        service = self._service(body)
+        ctx = self._context(body)
 
-        self.assertEqual(service.changes("s1"), body)
+        self.assertEqual(ctx.changes("Email", "s1"), body)
 
     def test_raises_on_method_level_error(self):
-        service = self._service({"error": FORBIDDEN})
+        ctx = self._context({"error": FORBIDDEN})
 
-        with self.assertRaises(RuntimeError) as ctx:
-            service.changes("s1")
+        with self.assertRaises(RuntimeError) as raised:
+            ctx.changes("Email", "s1")
 
-        self.assertIn("Email/changes failed", str(ctx.exception))
-        self.assertIn("forbidden", str(ctx.exception))
+        self.assertIn("Email/changes failed", str(raised.exception))
+        self.assertIn("forbidden", str(raised.exception))
 
 
 class FetchChanges(unittest.TestCase):
@@ -45,11 +45,10 @@ class FetchChanges(unittest.TestCase):
             mock.patch.object(mail_message, "get_sync_state", return_value="s1"),
             mock.patch.object(mail_message, "update_sync_state") as update_sync_state,
             mock.patch.object(mail_message, "get_jmap_connection"),
-            mock.patch.object(mail_message, "MailboxService"),
-            mock.patch.object(mail_message, "EmailService") as email_service,
+            mock.patch.object(mail_message, "JMAPContext") as jmap_context,
             mock.patch.object(mail_message, "log_mail_error") as log_mail_error,
         ):
-            email_service.return_value.changes = changes
+            jmap_context.return_value.changes = changes
             mail_message.fetch_changes("user@example.test", "f7", email_state="s2")
 
         return update_sync_state, log_mail_error

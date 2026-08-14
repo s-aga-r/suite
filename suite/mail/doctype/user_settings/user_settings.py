@@ -12,8 +12,7 @@ from frappe.model.document import Document
 
 from suite.mail.doctype.jmap_account.jmap_account import sync_jmap_accounts
 from suite.mail.jmap import get_jmap_session_manager
-from suite.mail.jmap.client import JMAPConnection
-from suite.mail.jmap.connection import JMAPConnectionInfo
+from suite.mail.jmap.client import JMAPConnection, JMAPConnectionInfo
 from suite.mail.utils import get_config
 from suite.mail.utils.dt import normalize_utc_z
 from suite.utils.permissions import OwnerFromUser

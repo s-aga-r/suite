@@ -11,7 +11,7 @@ from frappe import _
 from frappe.model.document import Document
 from frappe.utils import cint, today
 
-from suite.mail.jmap import get_push_subscription_service
+from suite.mail.jmap import get_user_context
 from suite.mail.utils import generate_uuid_style_hash, log_mail_error
 from suite.mail.utils.dt import normalize_utc_z
 from suite.mail.utils.user import get_jmap_configured_users, is_jmap_configured
@@ -199,16 +199,17 @@ def _add_push_subscription(
     types = types or None
 
     creation_id = str(uuid7())
-    push_subscription = {
-        "creation_id": creation_id,
-        "device_client_id": device_client_id,
-        "url": url,
-        "types": types,
-        "keys": get_push_subscription_keys(),
+    payload = {
+        creation_id: {
+            "deviceClientId": device_client_id,
+            "url": url,
+            "keys": get_push_subscription_keys() or None,
+            "types": types,
+        }
     }
 
-    service = get_push_subscription_service(user, ignore_permissions=ignore_permissions)
-    response = service.create([push_subscription])
+    ctx = get_user_context(user, ignore_permissions=ignore_permissions)
+    response = ctx.create("PushSubscription", payload)
 
     title = _("Push Subscription Creation Error")
     if response.get("created"):
@@ -225,8 +226,7 @@ def get_push_subscription(user: str, id: str, raise_exception: bool = True) -> d
 
     has_permission_for_user(user, raise_exception=raise_exception)
 
-    service = get_push_subscription_service(user)
-    if subscriptions := service.get([id]):
+    if subscriptions := get_user_context(user).get_all("PushSubscription", [id]):
         return format_push_subscription(user, subscriptions[0])
 
     if raise_exception:
@@ -246,10 +246,8 @@ def verify_push_subscription(user: str, id: str, verification_code: str) -> None
 
     is_jmap_configured(user, raise_exception=True)
 
-    push_subscription = {"id": id, "verification_code": verification_code}
-
-    service = get_push_subscription_service(user, ignore_permissions=True)
-    response = service.update([push_subscription])
+    ctx = get_user_context(user, ignore_permissions=True)
+    response = ctx.update("PushSubscription", {id: {"verificationCode": verification_code}})
 
     title = _("Push Subscription Renewal Error")
     if not response.get("updated"):
@@ -267,8 +265,9 @@ def renew_push_subscription(user: str, id: str) -> None:
 
     is_push_subscription_disabled(user, raise_exception=True)
 
-    service = get_push_subscription_service(user)
-    response = service.update([{"id": id}])
+    # A renewal patches expires to null: the server bumps the subscription to its maximum
+    # lifetime. The explicit None must reach the wire (only top-level None arguments are dropped).
+    response = get_user_context(user).update("PushSubscription", {id: {"expires": None}})
 
     title = _("Push Subscription Renewal Error")
     if not response.get("updated"):
@@ -297,10 +296,10 @@ def renew_expiring_push_subscriptions() -> None:
             continue
 
         try:
-            service = get_push_subscription_service(user, ignore_permissions=True)
+            ctx = get_user_context(user, ignore_permissions=True)
 
             expiring_ids = []
-            for subscription in service.get():
+            for subscription in ctx.get_all("PushSubscription"):
                 expires = subscription.get("expires")
                 if expires and parse_iso_datetime(expires, as_str=False) <= cutoff:
                     expiring_ids.append(subscription["id"])
@@ -308,7 +307,7 @@ def renew_expiring_push_subscriptions() -> None:
             if not expiring_ids:
                 continue
 
-            response = service.update([{"id": id} for id in expiring_ids])
+            response = ctx.update("PushSubscription", {id: {"expires": None} for id in expiring_ids})
             if not_updated := response.get("notUpdated"):
                 errors = "<br>".join(f"{id}: {error['description']}" for id, error in not_updated.items())
                 log_mail_error(
@@ -328,8 +327,7 @@ def delete_push_subscriptions(user: str, ids: list[str]) -> None:
 
     has_permission_for_user(user, raise_exception=True)
 
-    service = get_push_subscription_service(user)
-    response = service.delete(ids)
+    response = get_user_context(user).destroy("PushSubscription", ids)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -347,8 +345,7 @@ def fetch_push_subscriptions(user: str, page: int = 1, limit: int = 10) -> list:
 
     has_permission_for_user(user, raise_exception=True)
 
-    service = get_push_subscription_service(user)
-    subscriptions = service.get()
+    subscriptions = get_user_context(user).get_all("PushSubscription")
     formatted_subscriptions = [format_push_subscription(user, sub) for sub in subscriptions]
     frappe.cache.set_value(_get_total_cache_key(user), len(subscriptions), expires_in_sec=600)
 

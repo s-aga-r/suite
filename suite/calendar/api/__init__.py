@@ -12,7 +12,8 @@ from suite.calendar.doctype.calendar_event.calendar_event import (
 from suite.calendar.doctype.calendar_event.calendar_event import (
     get_calendar_events as get_calendar_events_by_ids,
 )
-from suite.mail.jmap import get_calendar_event_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.calendars import get_base_event_ids
 from suite.mail.utils.dt import normalize_utc_z
 from suite.utils.rate_limiter import dynamic_rate_limit
 
@@ -57,7 +58,7 @@ def enrich_events_with_master_data(account: str, events: list[dict]) -> None:
     if not events:
         return
 
-    base_ids = get_calendar_event_service(account).get_base_event_ids([event["id"] for event in events])
+    base_ids = get_base_event_ids(get_context(account), [event["id"] for event in events])
     if not base_ids:
         return
 
@@ -108,10 +109,10 @@ def enrich_participants_with_avatars(events: list[dict]) -> None:
 
 
 def _with_name(items: list[dict] | None) -> list[dict] | None:
-    """Map the formatter's ``_name`` onto the ``name`` key CalendarEventService reads.
+    """Map the formatter's ``_name`` onto the ``name`` key the JMAP event payload builders read.
 
     format_calendar_event emits locations and participants with ``_name`` (the desk field name) and
-    the frontend echoes that shape straight back. The service reads ``name``, so without this every
+    the frontend echoes that shape straight back. The payload builders read ``name``, so without this every
     edit rewrote location names as null and replaced each participant's display name with their
     email address - including on partial patches that never mentioned those fields.
     """

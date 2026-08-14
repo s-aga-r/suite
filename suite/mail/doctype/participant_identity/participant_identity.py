@@ -10,7 +10,8 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_participant_identity_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.calendars import create_participant_identities, update_participant_identities
 from suite.utils import parse_filters
 
 
@@ -132,8 +133,7 @@ def add_participant_identity(account: str, name: str, email: str, default: bool 
         "is_default": default,
     }
 
-    service = get_participant_identity_service(account)
-    response = service.create([participant_identity])
+    response = create_participant_identities(get_context(account), [participant_identity])
 
     title = _("Participant Identity Creation Error")
     if response.get("created"):
@@ -148,8 +148,7 @@ def add_participant_identity(account: str, name: str, email: str, default: bool 
 def get_participant_identity(account: str, id: str) -> dict:
     """Returns participant identity details for the given account and identity ID."""
 
-    service = get_participant_identity_service(account)
-    if identities := service.get([id]):
+    if identities := get_context(account).get_all("ParticipantIdentity", [id]):
         return format_participant_identity(account, identities[0])
 
     frappe.throw(
@@ -171,8 +170,7 @@ def update_participant_identity(account: str, id: str, name: str, email: str, de
         "is_default": default,
     }
 
-    service = get_participant_identity_service(account)
-    response = service.update([participant_identity])
+    response = update_participant_identities(get_context(account), [participant_identity])
 
     if not response.get("updated"):
         title = _("Participant Identity Update Error")
@@ -186,8 +184,7 @@ def update_participant_identity(account: str, id: str, name: str, email: str, de
 def delete_participant_identities(account: str, ids: list[str]) -> None:
     """Deletes participant identities for the specified account and ID(s)."""
 
-    service = get_participant_identity_service(account)
-    response = service.delete(ids)
+    response = get_context(account).destroy("ParticipantIdentity", ids)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -203,8 +200,7 @@ def delete_participant_identities(account: str, ids: list[str]) -> None:
 def fetch_participant_identities(account: str, page: int = 1, limit: int = 10) -> list:
     """Fetches and returns all participant identities for the given account."""
 
-    service = get_participant_identity_service(account)
-    identities = service.get()
+    identities = get_context(account).get_all("ParticipantIdentity")
     formatted_identities = [format_participant_identity(account, identity) for identity in identities]
     frappe.cache.set_value(_get_total_cache_key(account), len(identities), expires_in_sec=600)
 

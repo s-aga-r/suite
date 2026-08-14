@@ -9,12 +9,12 @@ from frappe.model.document import Document
 from frappe.utils import cint
 
 from suite.mail.jmap import (
-    get_core_service,
+    get_context,
     get_mailbox_id_by_role,
-    get_mailbox_service,
     invalidate_jmap_identities_cache,
     invalidate_jmap_mailboxes_cache,
 )
+from suite.mail.jmap.mail import update_mailboxes
 from suite.mail.store import (
     Entity,
     get_account_namespace,
@@ -25,7 +25,7 @@ from suite.mail.store import (
 from suite.store import destroy_namespace, get_search_base_path
 
 if TYPE_CHECKING:
-    from suite.mail.jmap.services.core import CoreService
+    from suite.mail.jmap import JMAPContext
 
 from suite.mail.doctype.sieve_script.sieve_script import build_automation_sieve, maybe_build_automation_sieve
 from suite.mail.doctype.user_account.user_account import get_user_jmap_accounts
@@ -85,37 +85,37 @@ class JMAPAccount(Document):
         return self.flags.get("user") or frappe.session.user
 
     @property
-    def core_service(self) -> "CoreService | None":  # noqa: UP037
-        """Return the JMAP core service for the account, or None if there is an error."""
+    def context(self) -> "JMAPContext | None":  # noqa: UP037
+        """Return the JMAP working context for the account, or None if there is an error."""
 
         if self.flags.in_delete or not self.name:
             return None
 
         try:
-            return get_core_service(self.name)
+            return get_context(self.name)
         except Exception:
-            frappe.msgprint(f"Error getting JMAP core service for account {self.name}")
+            frappe.msgprint(f"Error getting JMAP context for account {self.name}")
             return None
 
     @property
     def has_cached_jmap_identities(self) -> int:
         """Check if there are cached JMAP identities for the account."""
 
-        service = self.core_service
-        if not service:
+        ctx = self.context
+        if not ctx:
             return 0
 
-        return cint(bool(service.cache.get("identities")))
+        return cint(bool(ctx.cache.get("identities")))
 
     @property
     def has_cached_jmap_mailboxes(self) -> int:
         """Check if there are cached JMAP mailboxes for the account."""
 
-        service = self.core_service
-        if not service:
+        ctx = self.context
+        if not ctx:
             return 0
 
-        return cint(bool(service.cache.get("mailboxes")))
+        return cint(bool(ctx.cache.get("mailboxes")))
 
     @property
     def total_cached_blobs(self) -> int:
@@ -434,10 +434,10 @@ def rename_default_mailboxes(account: str) -> int:
 
 
 def _rename_default_mailboxes(account: str) -> int:
-    service = get_mailbox_service(account)
+    ctx = get_context(account)
 
     updates = []
-    for mailbox in service.mailboxes:
+    for mailbox in ctx.mailboxes:
         current_name, new_name = DEFAULT_MAILBOX_RENAMES.get(
             (mailbox.get("role") or "").lower(), (None, None)
         )
@@ -458,8 +458,8 @@ def _rename_default_mailboxes(account: str) -> int:
     if not updates:
         return 0
 
-    response = service.update(updates)
-    service.invalidate_cache(service.account, key="mailboxes")
+    response = update_mailboxes(ctx, updates)
+    ctx.invalidate_cache(ctx.account, key="mailboxes")
 
     if not_updated := response.get("notUpdated"):
         errors = ", ".join(f"{id}: {error.get('description')}" for id, error in not_updated.items())

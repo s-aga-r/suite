@@ -10,7 +10,7 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_identity_service
+from suite.mail.jmap import get_context
 from suite.utils import parse_filters
 
 
@@ -170,18 +170,18 @@ def add_identity(
     """Adds an identity for the given account with the specified parameters."""
 
     creation_id = str(uuid7())
-    identity = {
-        "creation_id": creation_id,
-        "email": email,
-        "name": name,
-        "reply_to": reply_to,
-        "bcc": bcc,
-        "text_signature": text_signature,
-        "html_signature": html_signature,
+    payload = {
+        creation_id: {
+            "email": email,
+            "name": name,
+            "replyTo": reply_to,
+            "bcc": bcc,
+            "textSignature": text_signature,
+            "htmlSignature": html_signature,
+        }
     }
 
-    service = get_identity_service(account)
-    response = service.create([identity])
+    response = get_context(account).create("Identity", payload)
 
     title = _("Identity Creation Error")
     if response.get("created"):
@@ -196,8 +196,7 @@ def add_identity(
 def get_identity(account: str, id: str, raise_exception: bool = True) -> dict | None:
     """Returns identity details for the given account and id."""
 
-    service = get_identity_service(account)
-    if identities := service.get([id]):
+    if identities := get_context(account).get_all("Identity", [id]):
         return format_identity(account, identities[0])
 
     if raise_exception:
@@ -219,17 +218,17 @@ def update_identity(
 ) -> None:
     """Updates an existing identity with the given parameters."""
 
-    identity = {
-        "id": id,
-        "name": name,
-        "reply_to": reply_to,
-        "bcc": bcc,
-        "text_signature": text_signature,
-        "html_signature": html_signature,
+    payload = {
+        id: {
+            "name": name,
+            "replyTo": reply_to,
+            "bcc": bcc,
+            "textSignature": text_signature,
+            "htmlSignature": html_signature,
+        }
     }
 
-    service = get_identity_service(account)
-    response = service.update([identity])
+    response = get_context(account).update("Identity", payload)
 
     if not response.get("updated"):
         title = _("Identity Update Error")
@@ -243,8 +242,7 @@ def update_identity(
 def delete_identities(account: str, ids: list[str]) -> None:
     """Deletes identities for the given account and list of identity IDs."""
 
-    service = get_identity_service(account, ignore_permissions=True)
-    response = service.delete(ids)
+    response = get_context(account, ignore_permissions=True).destroy("Identity", ids)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -260,8 +258,7 @@ def delete_identities(account: str, ids: list[str]) -> None:
 def fetch_identities(account: str, page: int = 1, limit: int = 10) -> list:
     """Returns a list of identities for the given account."""
 
-    service = get_identity_service(account, ignore_permissions=True)
-    identities = service.get()
+    identities = get_context(account, ignore_permissions=True).get_all("Identity")
 
     formatted_identities = [format_identity(account, identity) for identity in identities]
     frappe.cache.set_value(_get_total_cache_key(account), len(identities), expires_in_sec=600)

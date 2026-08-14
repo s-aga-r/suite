@@ -18,7 +18,8 @@ from datetime import datetime
 import frappe
 from frappe.utils import add_to_date, get_datetime, get_datetime_str, now, time_diff_in_seconds
 
-from suite.mail.jmap import get_email_service, get_email_submission_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.mail import cancel_submission, get_emails, get_submissions
 from suite.mail.tests.base import StalwartIntegrationTestCase, unique_name
 from suite.mail.utils.dt import to_utc_z
 from suite.utils.dt import convert_to_utc
@@ -59,7 +60,7 @@ class TestMailScheduledSend(StalwartIntegrationTestCase):
 
     def _get_submission(self, account: str, submission_id: str) -> dict | None:
         with self.set_user(self.sender.email):
-            submissions = get_email_submission_service(account).get([submission_id])
+            submissions = get_submissions(get_context(account), [submission_id])
         return submissions[0] if submissions else None
 
     # --- tests --------------------------------------------------------------
@@ -87,7 +88,7 @@ class TestMailScheduledSend(StalwartIntegrationTestCase):
         # The message sits in Sent while held (moved there at submission time).
         with self.set_user(self.sender.email):
             sent_id = frappe.get_doc("Mail Queue", doc.name).mailbox_id
-            emails = get_email_service(account).get([doc.id], properties=["mailboxIds"])
+            emails = get_emails(get_context(account), [doc.id], properties=["mailboxIds"])
         self.assertTrue(emails and emails[0]["mailboxIds"].get(sent_id))
 
         # Held, so nothing has reached the recipient.
@@ -124,7 +125,7 @@ class TestMailScheduledSend(StalwartIntegrationTestCase):
             from suite.mail.jmap import get_mailbox_id_by_role
 
             drafts_id = get_mailbox_id_by_role(account, "drafts", raise_exception=True)
-            emails = get_email_service(account).get([doc.id], properties=["mailboxIds", "keywords"])
+            emails = get_emails(get_context(account), [doc.id], properties=["mailboxIds", "keywords"])
 
         self.assertEqual(list(emails[0]["mailboxIds"].keys()), [drafts_id])
         self.assertTrue(emails[0]["keywords"].get("$draft"))
@@ -345,7 +346,7 @@ class TestMailScheduledSend(StalwartIntegrationTestCase):
 
         out_of_band = self._schedule(minutes=120)
         with self.set_user(self.sender.email):
-            get_email_submission_service(account).cancel(out_of_band.doc.submission_id)
+            cancel_submission(get_context(account), out_of_band.doc.submission_id)
 
         with self.set_user("Administrator"):
             delivered_doc = frappe.get_doc("Mail Queue", delivered["name"])

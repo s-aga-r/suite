@@ -1,7 +1,7 @@
 import frappe
 from frappe import _
 
-from suite.mail.jmap import get_push_subscription_service
+from suite.mail.jmap import get_user_context
 from suite.mail.utils import log_mail_error
 from suite.mail.utils.user import get_jmap_configured_users
 
@@ -22,13 +22,15 @@ def execute() -> None:
 
     for user in get_jmap_configured_users():
         try:
-            service = get_push_subscription_service(user, ignore_permissions=True)
+            ctx = get_user_context(user, ignore_permissions=True)
 
-            updates = [{"id": subscription["id"], "types": None} for subscription in service.get()]
-            if not updates:
+            payload = {
+                subscription["id"]: {"types": None} for subscription in ctx.get_all("PushSubscription")
+            }
+            if not payload:
                 continue
 
-            response = service.update(updates)
+            response = ctx.update("PushSubscription", payload)
             if not_updated := response.get("notUpdated"):
                 errors = "<br>".join(
                     # SetError's description is optional; fall back to its required type

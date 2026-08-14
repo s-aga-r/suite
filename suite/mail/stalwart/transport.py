@@ -1,77 +1,22 @@
+"""The requests-based JMAP transport used only by the Stalwart admin (management) client.
+
+The generic mail/calendar client rides jmaplib (see suite.mail.jmap); this module survives for
+the admin realm — vendor-URN management sessions, master-user auth, and raw /api endpoints —
+until that migrates too. The shared connection dataclasses and the 503 error contract live in
+suite.mail.jmap.client so both realms raise one class.
+"""
+
 import time
-from dataclasses import dataclass
-from typing import Any
 from urllib.parse import urljoin
 
 import requests
 
-# Gateway statuses a reverse proxy returns when the JMAP server behind it is down or overloaded.
-UNAVAILABLE_STATUS_CODES = (502, 503, 504)
-
-
-class MailServerUnavailableError(Exception):
-    """The JMAP server could not be reached (connection refused, DNS failure, timeout) or an
-    upstream gateway reported it down.
-
-    ``http_status_code`` makes Frappe respond with 503 instead of a generic 500, so clients can
-    distinguish "the mail server is temporarily down" from an application bug and show a friendly
-    message. The original ``requests`` exception is always chained for diagnosis.
-    """
-
-    http_status_code = 503
-
-    def __init__(self, message: str = "The mail server is temporarily unavailable.") -> None:
-        super().__init__(message)
-
-
-@dataclass
-class JMAPConnectionInfo:
-    """
-    Data class for storing JMAP connection information.
-
-    Properties:
-    - url: The base URL of the JMAP server.
-    - username: The username for authentication.
-    - password: The password for authentication.
-    - timeout: A tuple specifying the connection and read timeouts for requests (default: (30.0, 60.0)).
-    - verify_ssl: Whether to verify the server's SSL certificate (default: True). Disable only for local
-      development against a server with a self-signed certificate.
-    """
-
-    url: str
-    username: str
-    password: str
-    timeout: tuple[float, float] = (30.0, 60.0)
-    verify_ssl: bool = True
-
-
-class JMAPSessionManager:
-    """Manages the JMAP session information, allowing for retrieval, storage, and clearing of session data."""
-
-    def __init__(self, get_session: callable, set_session: callable, clear_session: callable) -> None:
-        """Initializes the SessionManager with the provided functions for getting, setting, and clearing session data."""
-
-        if not callable(get_session) or not callable(set_session) or not callable(clear_session):
-            raise ValueError("All parameters must be callable functions.")
-
-        self._get_session = get_session
-        self._set_session = set_session
-        self._clear_session = clear_session
-
-    def get_session(self) -> Any | None:
-        """Retrieves the current session data, if available."""
-
-        return self._get_session()
-
-    def set_session(self, session: dict) -> None:
-        """Sets the session data."""
-
-        self._set_session(session)
-
-    def clear_session(self) -> None:
-        """Clears the session data."""
-
-        self._clear_session()
+from suite.mail.jmap.client import (
+    UNAVAILABLE_STATUS_CODES,
+    JMAPConnectionInfo,
+    JMAPSessionManager,
+    MailServerUnavailableError,
+)
 
 
 class JMAPConnection:

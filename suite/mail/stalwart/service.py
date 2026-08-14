@@ -4,7 +4,7 @@ from typing import Any, ClassVar
 import frappe
 from frappe import _
 
-from suite.mail.jmap.connection import JMAPConnection
+from suite.mail.stalwart.transport import JMAPConnection
 from suite.mail.utils import log_mail_error
 
 CORE_CAPABILITY = "urn:ietf:params:jmap:core"

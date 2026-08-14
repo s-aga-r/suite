@@ -3,7 +3,7 @@ import time
 import frappe
 from frappe import _
 
-from suite.mail.jmap import get_push_subscription_service
+from suite.mail.jmap import get_user_context
 from suite.mail.utils import log_mail_error
 
 
@@ -13,11 +13,11 @@ def execute() -> None:
 
     for user in frappe.db.get_all("User Settings", {"username": ["!=", ""]}, pluck="user"):
         try:
-            service = get_push_subscription_service(user, ignore_permissions=True)
+            ctx = get_user_context(user, ignore_permissions=True)
 
-            subscriptions = service.get()
+            subscriptions = ctx.get_all("PushSubscription")
             if ids := [s["id"] for s in subscriptions]:
-                service.delete(ids)
+                ctx.destroy("PushSubscription", ids)
 
             ps = frappe.new_doc("Push Subscription")
             ps.user = user

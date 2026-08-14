@@ -11,7 +11,9 @@ from frappe.model.document import Document
 from frappe.utils import cint, today
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_calendar_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.calendars import create_calendars, update_calendars
+from suite.mail.jmap.calendars import delete_calendars as delete_jmap_calendars
 from suite.utils import parse_filters
 from suite.utils.rate_limiter import dynamic_rate_limit
 
@@ -192,8 +194,7 @@ def add_calendar(
         "is_default": default,
     }
 
-    service = get_calendar_service(account)
-    response = service.create([calendar])
+    response = create_calendars(get_context(account), [calendar])
 
     title = _("Calendar Creation Error")
     if response.get("created"):
@@ -208,8 +209,7 @@ def add_calendar(
 def get_calendar(account: str, id: str) -> dict:
     """Returns calendar details for the given account and id."""
 
-    service = get_calendar_service(account)
-    if calendars := service.get([id]):
+    if calendars := get_context(account).get_all("Calendar", [id]):
         return format_calendar(account, calendars[0])
 
     frappe.throw(
@@ -248,8 +248,7 @@ def update_calendar(
         "is_default": default,
     }
 
-    service = get_calendar_service(account)
-    response = service.update([calendar])
+    response = update_calendars(get_context(account), [calendar])
 
     title = _("Calendar Update Error")
     if not response.get("updated"):
@@ -264,8 +263,7 @@ def update_calendar(
 def delete_calendars(account: str, ids: list[str], remove_events: bool = True) -> None:
     """Deletes calendars for the specified account and ID(s)."""
 
-    service = get_calendar_service(account)
-    response = service.delete(ids, remove_events=remove_events)
+    response = delete_jmap_calendars(get_context(account), ids, remove_events=remove_events)
 
     if response.get("notDestroyed"):
         error_messages = []
@@ -281,8 +279,7 @@ def delete_calendars(account: str, ids: list[str], remove_events: bool = True) -
 def fetch_calendars(account: str, page: int = 1, limit: int = 10) -> list:
     """Returns a list of calendars for the given account."""
 
-    service = get_calendar_service(account)
-    calendars = service.get()
+    calendars = get_context(account).get_all("Calendar")
     formatted_calendars = [format_calendar(account, calendar) for calendar in calendars]
     frappe.cache.set_value(_get_total_cache_key(account), len(calendars), expires_in_sec=600)
 

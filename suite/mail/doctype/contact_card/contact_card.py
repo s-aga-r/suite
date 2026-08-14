@@ -11,7 +11,15 @@ from frappe.utils import cint
 
 from suite.mail.doctype.address_book.address_book import validate_address_book_name_format
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap import get_contact_card_service
+from suite.mail.jmap import get_context
+from suite.mail.jmap.contacts import (
+    create_contact_cards,
+    update_card_address_book_ids,
+    update_contact_cards,
+)
+from suite.mail.jmap.contacts import (
+    get_contact_cards as _get_jmap_contact_cards,
+)
 from suite.mail.store import Entity, get_data_store, get_email_address_index
 from suite.mail.utils import log_mail_error
 from suite.mail.utils.dt import normalize_utc_z
@@ -277,8 +285,7 @@ def add_contact_card(
         "kind": kind or "individual",
     }
 
-    service = get_contact_card_service(account)
-    response = service.create([contact_card])
+    response = create_contact_cards(get_context(account), [contact_card])
 
     title = _("Contact Card Creation Error")
     if response.get("created"):
@@ -293,13 +300,11 @@ def add_contact_card(
 def bulk_add_contact_cards(account: str, contact_cards: list[dict], raise_exception: bool = True) -> None:
     """Adds multiple contact cards for the given account and returns their IDs."""
 
-    service = get_contact_card_service(account)
-
     for card in contact_cards:
         if not card.get("creation_id"):
             card["creation_id"] = str(uuid7())
 
-    response = service.create(contact_cards)
+    response = create_contact_cards(get_context(account), contact_cards)
 
     title = _("Contact Card Creation Error")
     if response.get("notCreated"):
@@ -318,8 +323,7 @@ def fetch_contact_cards(
     """Returns a list of contact cards and total count based on the provided filter."""
 
     contact_cards = []
-    service = get_contact_card_service(account)
-    data = service.query(filter, position, limit, sort)
+    data = get_context(account).query("ContactCard", filter, position, limit, sort)
 
     ids = data.get("ids", [])
     total = data.get("total", 0)
@@ -349,9 +353,9 @@ def get_contact_cards(account: str, ids: list[str]) -> list[dict]:
             ids_to_fetch.append(id)
 
     if ids_to_fetch:
-        service = get_contact_card_service(account)
-        cards = service.get(ids_to_fetch)
-        address_book_map = {ab["id"]: ab["name"] for ab in service.address_books}
+        ctx = get_context(account)
+        cards = _get_jmap_contact_cards(ctx, ids_to_fetch)
+        address_book_map = {ab["id"]: ab["name"] for ab in ctx.address_books}
 
         contact_cards_to_cache = {}
         for card in cards:
@@ -388,8 +392,7 @@ def update_contact_card(
         "kind": kind or "individual",
     }
 
-    service = get_contact_card_service(account)
-    response = service.update([contact_card])
+    response = update_contact_cards(get_context(account), [contact_card])
 
     title = _("Contact Card Update Error")
     if not response.get("updated"):
@@ -418,9 +421,8 @@ def contact_card_update_address_books(
     - move_to_address_book_id: replaces addressBookIds entirely
     """
 
-    service = get_contact_card_service(account)
-    response = service.update_address_book_ids(
-        ids, add_address_book_id, remove_address_book_id, move_to_address_book_id
+    response = update_card_address_book_ids(
+        get_context(account), ids, add_address_book_id, remove_address_book_id, move_to_address_book_id
     )
 
     title = _("Contact Card Update Error")
@@ -480,8 +482,7 @@ def contact_card_move_to_address_book(
 def delete_contact_cards(account: str, ids: list[str]) -> None:
     """Deletes contact cards for the given account by its IDs."""
 
-    service = get_contact_card_service(account)
-    service.delete(ids)
+    get_context(account).destroy("ContactCard", ids)
     _remove_cached_contact_cards(account, ids)
 
 

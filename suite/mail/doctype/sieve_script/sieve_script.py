@@ -18,13 +18,14 @@ from suite.mail.doctype.screened_email_address.screened_email_address import (
 )
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
 from suite.mail.jmap import (
+    JMAPContext,
     format_jmap_error,
+    get_context,
     get_jmap_set_error_message,
     get_mailbox_id_by_name,
     get_mailbox_id_by_role,
     get_mailbox_name_by_id,
     get_mailboxes,
-    get_sieve_script_service,
 )
 from suite.mail.utils import log_mail_error
 from suite.mail.utils.user import get_account_emails
@@ -143,14 +144,16 @@ class SieveScript(Document):
             frappe.throw(_("Not allowed to create automation script."))
 
         creation_id = str(uuid7())
-        service = get_sieve_script_service(account)
-        sieve_script = {
-            "creation_id": creation_id,
-            "name": name,
-            "content": content,
-            "is_active": active,
-        }
-        response = service.create([sieve_script])
+        ctx = get_context(account)
+        blob = ctx.upload_blob(content.encode("utf-8"), "application/sieve")
+
+        kwargs = {}
+        if active:
+            kwargs["onSuccessActivateScript"] = f"#{creation_id}"
+
+        response = ctx.create(
+            "SieveScript", {creation_id: {"name": name, "blobId": blob["blobId"]}}, **kwargs
+        )
 
         if created := response.get("created"):
             return created[creation_id]["id"]
@@ -171,8 +174,7 @@ class SieveScript(Document):
         """Returns a list of sieve scripts for the given account."""
 
         scripts = []
-        service = get_sieve_script_service(account)
-        data = service.query(filter, position, limit)
+        data = _query_sieve_scripts(get_context(account), filter, position, limit)
 
         ids = data.get("ids", [])
         total = data.get("total", 0)
@@ -186,12 +188,12 @@ class SieveScript(Document):
         """Returns a list of sieve scripts for the provided IDs in the same order as ids."""
 
         sieve_scripts = {}
-        service = get_sieve_script_service(account)
-        scripts = service.get(ids)
+        ctx = get_context(account)
+        scripts = ctx.get_all("SieveScript", ids)
 
         if download_content:
             blobs = [(s["blobId"], None) for s in scripts if s["blobId"]]
-            data = service.download_blobs_concurrently(blobs)
+            data = ctx.download_blobs_concurrently(blobs)
 
             for script in scripts:
                 script["content"] = data.get(script["blobId"], b"").decode("utf-8")
@@ -209,8 +211,12 @@ class SieveScript(Document):
         if not content or not content.strip():
             frappe.throw(_("Sieve script content cannot be empty."))
 
-        service = get_sieve_script_service(account)
-        response = service.validate(content)
+        ctx = get_context(account)
+        blob = ctx.upload_blob(content.encode("utf-8"), "application/sieve")
+
+        # A successful validate call reports the outcome in an `error` key, and a method-level
+        # error surfaces under the same key via `call`, so only `error` has to be checked.
+        response = ctx.call("SieveScript/validate", {"blobId": blob["blobId"]})
 
         if error := response.get("error"):
             frappe.throw(format_jmap_error(error), title=_("Sieve Script Validation Error"))
@@ -229,8 +235,8 @@ class SieveScript(Document):
         if not content or not content.strip():
             frappe.throw(_("Sieve script content cannot be empty."))
 
-        service = get_sieve_script_service(account)
-        scripts = service.get([id])
+        ctx = get_context(account)
+        scripts = ctx.get_all("SieveScript", [id])
 
         if not scripts:
             frappe.throw(
@@ -240,8 +246,20 @@ class SieveScript(Document):
 
         script = scripts[0]
         deactivate = script["isActive"] and not active
-        sieve_script = {"id": id, "name": name, "content": content, "is_active": bool(active)}
-        response = service.update([sieve_script], deactivate=deactivate)
+
+        kwargs = {}
+        if active:
+            kwargs["onSuccessActivateScript"] = id
+        if deactivate:
+            kwargs["onSuccessDeactivateScript"] = True
+
+        if len(kwargs) > 1:
+            raise ValueError(
+                "Cannot specify both 'onSuccessActivateScript' and 'onSuccessDeactivateScript' at the same time."
+            )
+
+        blob = ctx.upload_blob(content.encode("utf-8"), "application/sieve")
+        response = ctx.update("SieveScript", {id: {"name": name, "blobId": blob["blobId"]}}, **kwargs)
 
         if not response.get("updated"):
             frappe.throw(
@@ -253,8 +271,7 @@ class SieveScript(Document):
     def _delete_sieve_scripts(cls, account: str, ids: list[str]) -> None:
         """Deletes sieve scripts for the given list of IDs and account."""
 
-        service = get_sieve_script_service(account)
-        response = service.delete(ids)
+        response = get_context(account).destroy("SieveScript", ids)
 
         title = _("Sieve Script Deletion Error")
         if not_destroyed := response.get("notDestroyed"):
@@ -334,11 +351,24 @@ def bulk_delete(names: str | list[str]) -> None:
 def get_active_sieve_script_id(account: str) -> str | None:
     """Returns the ID of the currently active sieve script for the given account, if any."""
 
-    service = get_sieve_script_service(account)
-    query_result = service.query({"isActive": True})
+    query_result = _query_sieve_scripts(get_context(account), {"isActive": True})
 
     if query_result.get("ids") and len(query_result["ids"]) > 0:
         return query_result["ids"][0]
+
+
+def _query_sieve_scripts(
+    ctx: JMAPContext, filter: dict | None = None, position: int = 0, limit: int = 50
+) -> dict:
+    """Queries sieve scripts, narrowing the filter to the supported name/isActive conditions."""
+
+    _filter = {}
+    filter = filter or {}
+    for key in ("name", "isActive"):
+        if key in filter and filter[key] is not None:
+            _filter[key] = filter[key]
+
+    return ctx.query("SieveScript", _filter, position, limit)
 
 
 def is_vacation_script_active(account: str) -> bool:
@@ -961,14 +991,13 @@ def get_screening_mailbox_path(account: str) -> str:
     """
 
     from suite.mail.doctype.mailbox.mailbox import add_mailbox
-    from suite.mail.jmap.services.core import CoreService
 
     # The mailbox list lives in a per-process TTL cache, so a negative lookup can be stale — another
     # worker may already have created the Screener. Refresh from the server before deciding to create,
     # so we never try to recreate an existing mailbox (which JMAP rejects with "already exists").
-    CoreService.invalidate_cache(account, key="mailboxes")
+    JMAPContext.invalidate_cache(account, key="mailboxes")
     if not get_mailbox_id_by_name(account, SCREENER_MAILBOX_NAME):
         add_mailbox(account, SCREENER_MAILBOX_NAME)
-        CoreService.invalidate_cache(account, key="mailboxes")
+        JMAPContext.invalidate_cache(account, key="mailboxes")
 
     return get_mailbox_path(account, SCREENER_MAILBOX_NAME, raise_exception=True)

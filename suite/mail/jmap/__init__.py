@@ -1,4 +1,13 @@
-from typing import Any
+"""Frappe-side helpers for working with the JMAP server through jmaplib.
+
+This package is not a JMAP implementation — jmaplib owns the protocol. It provides:
+
+- :func:`get_jmap_connection` / :func:`get_context`: per-user connections (credentials, Redis
+  session reuse, permission gates) and account-scoped working contexts.
+- Domain helper modules (:mod:`~suite.mail.jmap.mail`, :mod:`~suite.mail.jmap.contacts`,
+  :mod:`~suite.mail.jmap.calendars`) with payload shaping for each JMAP data type.
+- The account-keyed convenience lookups and whitelisted endpoints below.
+"""
 
 import frappe
 from frappe import _
@@ -6,27 +15,8 @@ from frappe.utils import cint
 from frappe.utils.caching import request_cache
 
 from suite.mail.doctype.user_account.user_account import get_user_for_jmap_account
-from suite.mail.jmap.client import JMAPConnection
-from suite.mail.jmap.connection import JMAPConnectionInfo, JMAPSessionManager
-from suite.mail.jmap.services.blob.blob import BlobService
-from suite.mail.jmap.services.calendars.calendar import CalendarService
-from suite.mail.jmap.services.calendars.calendar_event import CalendarEventService
-from suite.mail.jmap.services.calendars.calendar_event_notification import CalendarEventNotificationService
-from suite.mail.jmap.services.calendars.participant_identity import ParticipantIdentityService
-from suite.mail.jmap.services.contacts.address_book import AddressBookService
-from suite.mail.jmap.services.contacts.contact_card import ContactCardService
-from suite.mail.jmap.services.core import CoreService
-from suite.mail.jmap.services.mail.email import EmailService
-from suite.mail.jmap.services.mail.identity import IdentityService
-from suite.mail.jmap.services.mail.mailbox import MailboxService
-from suite.mail.jmap.services.mail.submission.email_submission import EmailSubmissionService
-from suite.mail.jmap.services.mail.thread import ThreadService
-from suite.mail.jmap.services.principals.principal import PrincipalService
-from suite.mail.jmap.services.push_subscription import PushSubscriptionService
-from suite.mail.jmap.services.quota.quota import QuotaService
-from suite.mail.jmap.services.sieve.sieve_script import SieveScriptService
-from suite.mail.jmap.services.vacationresponse.vacation_response import VacationResponseService
-from suite.mail.jmap.services.websocket.websocket import WebSocketService
+from suite.mail.jmap.client import JMAPConnection, JMAPConnectionInfo, JMAPSessionManager
+from suite.mail.jmap.context import JMAPContext, format_jmap_error, get_jmap_set_error_message
 from suite.mail.store import Entity, get_data_store
 from suite.mail.utils import get_config
 from suite.utils.user import is_system_manager
@@ -38,8 +28,8 @@ def get_jmap_connection(
 ) -> JMAPConnection:
     """Returns a JMAPConnection instance for the specified user, using the user's settings for connection details.
 
-    Cached per request so the many service factories that resolve a connection for the same
-    user reuse one instance (and skip the repeated password decryption / session lookup).
+    Cached per request so the many callers that resolve a connection for the same user reuse one
+    instance (and skip the repeated password decryption / session lookup).
     """
 
     if not ignore_permissions:
@@ -84,212 +74,23 @@ def get_jmap_session_manager(user) -> JMAPSessionManager:
     )
 
 
-def get_address_book_service(
+def get_context(
     account: str,
     ignore_permissions: bool = False,
-) -> AddressBookService:
-    """Returns an instance of AddressBookService for the specified account."""
+    timeout: tuple[float, float] = (30.0, 60.0),
+) -> JMAPContext:
+    """Returns a JMAP working context scoped to the given JMAP Account."""
 
     user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return AddressBookService(account, connection)
+    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions, timeout=timeout)
+    return JMAPContext(connection, account)
 
 
-def get_core_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> CoreService:
-    """Returns an instance of CoreService for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return CoreService(account, connection)
-
-
-def get_blob_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> BlobService:
-    """Returns an instance of BlobService for handling blob-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return BlobService(account, connection)
-
-
-def get_calendar_event_notification_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> CalendarEventNotificationService:
-    """Returns an instance of CalendarEventNotificationService for handling calendar event notification-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return CalendarEventNotificationService(account, connection)
-
-
-def get_calendar_event_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> CalendarEventService:
-    """Returns an instance of CalendarEventService for handling calendar event-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return CalendarEventService(account, connection)
-
-
-def get_calendar_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> CalendarService:
-    """Returns an instance of CalendarService for handling calendar-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return CalendarService(account, connection)
-
-
-def get_contact_card_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> ContactCardService:
-    """Returns an instance of ContactCardService for handling contact card-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return ContactCardService(account, connection)
-
-
-def get_email_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> EmailService:
-    """Returns an instance of EmailService for handling email-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return EmailService(account, connection)
-
-
-def get_email_submission_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> EmailSubmissionService:
-    """Returns an instance of EmailSubmissionService for handling email submission-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return EmailSubmissionService(account, connection)
-
-
-def get_identity_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> IdentityService:
-    """Returns an instance of IdentityService for handling identity-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return IdentityService(account, connection)
-
-
-def get_mailbox_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> MailboxService:
-    """Returns an instance of MailboxService for handling mailbox-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return MailboxService(account, connection)
-
-
-def get_participant_identity_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> ParticipantIdentityService:
-    """Returns an instance of ParticipantIdentityService for handling participant identity-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return ParticipantIdentityService(account, connection)
-
-
-def get_principal_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> PrincipalService:
-    """Returns an instance of PrincipalService for handling principal-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return PrincipalService(account, connection)
-
-
-def get_push_subscription_service(
-    user: str,
-    ignore_permissions: bool = False,
-) -> PushSubscriptionService:
-    """Returns an instance of PushSubscriptionService for handling push subscription-related operations for the specified user."""
+def get_user_context(user: str, ignore_permissions: bool = False) -> JMAPContext:
+    """Returns a user-scoped JMAP working context (no accountId — e.g. for push subscriptions)."""
 
     connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return PushSubscriptionService(connection)
-
-
-def get_quota_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> QuotaService:
-    """Returns an instance of QuotaService for handling quota-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return QuotaService(account, connection)
-
-
-def get_sieve_script_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> SieveScriptService:
-    """Returns an instance of SieveScriptService for handling sieve script-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return SieveScriptService(account, connection)
-
-
-def get_thread_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> ThreadService:
-    """Returns an instance of ThreadService for handling thread-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return ThreadService(account, connection)
-
-
-def get_vacation_response_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> VacationResponseService:
-    """Returns an instance of VacationResponseService for handling vacation response-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return VacationResponseService(account, connection)
-
-
-def get_websocket_service(
-    account: str,
-    ignore_permissions: bool = False,
-) -> WebSocketService:
-    """Returns an instance of WebSocketService for handling WebSocket-related operations for the specified account."""
-
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user, ignore_permissions=ignore_permissions)
-    return WebSocketService(account, connection)
+    return JMAPContext(connection, None)
 
 
 def invalidate_jmap_identities_cache(account: str) -> None:
@@ -310,8 +111,7 @@ def get_identities(account: str) -> list[dict]:
     """Returns the list of identities for the specified account."""
 
     user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = IdentityService(account, connection)
+    ctx = JMAPContext(get_jmap_connection(user), account)
 
     identities = [
         {
@@ -329,7 +129,7 @@ def get_identities(account: str) -> list[dict]:
             "text_signature": i["textSignature"],
             "may_delete": cint(i["mayDelete"]),
         }
-        for i in service.identities
+        for i in ctx.identities
     ]
 
     return identities
@@ -339,8 +139,7 @@ def get_participant_identities(account: str) -> list[dict]:
     """Returns the list of participant identities for the specified account."""
 
     user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = ParticipantIdentityService(account, connection)
+    ctx = JMAPContext(get_jmap_connection(user), account)
 
     return [
         {
@@ -352,25 +151,23 @@ def get_participant_identities(account: str) -> list[dict]:
             "email": i["calendarAddress"].lower().replace("mailto:", ""),
             "default": cint(bool(i["isDefault"])),
         }
-        for i in service.get()
+        for i in ctx.get_all("ParticipantIdentity")
     ]
 
 
 def get_identity_id_by_email(account: str, email: str, raise_exception: bool = False) -> str | None:
     """Returns the identity ID for the specified email address, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = IdentityService(account, connection)
-    return service.get_identity_id_by_email(email, raise_exception=raise_exception)
+    from suite.mail.jmap.mail import get_identity_id_by_email as _get_identity_id_by_email
+
+    return _get_identity_id_by_email(get_context(account), email, raise_exception=raise_exception)
 
 
 def get_mailboxes(account: str) -> list[dict]:
     """Returns the list of mailboxes for the specified account."""
 
     user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = MailboxService(account, connection)
+    ctx = JMAPContext(get_jmap_connection(user), account)
 
     mailboxes = [
         {
@@ -384,7 +181,7 @@ def get_mailboxes(account: str) -> list[dict]:
             "parent_id": m["parentId"],
             "subscribed": m["isSubscribed"],
         }
-        for m in service.mailboxes
+        for m in ctx.mailboxes
     ]
 
     return mailboxes
@@ -398,57 +195,51 @@ def get_mailbox_id_by_role(
 ) -> str | None:
     """Returns the mailbox ID for the specified role, or None if not found. Optionally creates the mailbox if it does not exist."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = MailboxService(account, connection)
-    return service.get_mailbox_id_by_role(
-        role, create_if_not_exists=create_if_not_exists, raise_exception=raise_exception
+    from suite.mail.jmap.mail import get_mailbox_id_by_role as _get_mailbox_id_by_role
+
+    return _get_mailbox_id_by_role(
+        get_context(account), role, create_if_not_exists=create_if_not_exists, raise_exception=raise_exception
     )
 
 
 def get_mailbox_role_by_id(account: str, id: str, raise_exception: bool = False) -> str | None:
     """Returns the mailbox role for the specified mailbox ID, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = MailboxService(account, connection)
-    return service.get_mailbox_role_by_id(id, raise_exception=raise_exception)
+    from suite.mail.jmap.mail import get_mailbox_role_by_id as _get_mailbox_role_by_id
+
+    return _get_mailbox_role_by_id(get_context(account), id, raise_exception=raise_exception)
 
 
 def get_mailbox_name_by_id(account: str, id: str, raise_exception: bool = False) -> str | None:
     """Returns the mailbox name for the specified mailbox ID, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = MailboxService(account, connection)
-    return service.get_mailbox_name_by_id(id, raise_exception=raise_exception)
+    from suite.mail.jmap.mail import get_mailbox_name_by_id as _get_mailbox_name_by_id
+
+    return _get_mailbox_name_by_id(get_context(account), id, raise_exception=raise_exception)
 
 
 def get_mailbox_id_by_name(account: str, name: str, raise_exception: bool = False) -> str | None:
     """Returns the mailbox ID for the specified mailbox name, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = MailboxService(account, connection)
-    return service.get_mailbox_id_by_name(name, raise_exception=raise_exception)
+    from suite.mail.jmap.mail import get_mailbox_id_by_name as _get_mailbox_id_by_name
+
+    return _get_mailbox_id_by_name(get_context(account), name, raise_exception=raise_exception)
 
 
 def get_default_address_book_id(account: str, raise_exception: bool = False) -> str | None:
     """Returns the ID of the default address book for the specified account, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = AddressBookService(account, connection)
-    return service.get_default(raise_exception=raise_exception)
+    from suite.mail.jmap.contacts import get_default_address_book_id as _get_default_address_book_id
+
+    return _get_default_address_book_id(get_context(account), raise_exception=raise_exception)
 
 
 def get_default_calendar_id(account: str, raise_exception: bool = False) -> str | None:
     """Returns the ID of the default calendar for the specified account, or None if not found."""
 
-    user = get_user_for_jmap_account(account, raise_exception=True)
-    connection = get_jmap_connection(user)
-    service = CalendarService(account, connection)
-    return service.get_default(raise_exception=raise_exception)
+    from suite.mail.jmap.calendars import get_default_calendar_id as _get_default_calendar_id
+
+    return _get_default_calendar_id(get_context(account), raise_exception=raise_exception)
 
 
 @frappe.whitelist()
@@ -486,30 +277,3 @@ def get_mailboxes_for_account(account: str) -> list[dict]:
     """Returns the list of mailboxes for the specified account."""
 
     return get_mailboxes(account)
-
-
-def format_jmap_error(error: dict | None) -> str:
-    """Returns a readable message for a JMAP error object.
-
-    Only `type` is mandatory on a JMAP error object; `description` is optional and may be null,
-    so never index into it directly.
-    """
-
-    error = error or {}
-
-    return error.get("description") or error.get("type") or _("An unknown error occurred.")
-
-
-def get_jmap_set_error_message(response: dict, not_done_key: str, id: str) -> str:
-    """Returns a readable message for a failed JMAP `set` call.
-
-    A `set` can fail per object (reported under `not_done_key`, keyed by the object id) or at the
-    method level (reported under `error`), and neither is guaranteed to be present — nor is the
-    per-object error guaranteed to be keyed by the id we asked about — so every source is probed
-    before falling back to a generic message.
-    """
-
-    not_done = response.get(not_done_key) or {}
-    error = not_done.get(id) or next(iter(not_done.values()), None) or response.get("error")
-
-    return format_jmap_error(error)
