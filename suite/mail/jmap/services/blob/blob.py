@@ -44,10 +44,7 @@ class BlobService(CoreService):
 
         results = []
         for batch in self.create_batches(ids, self.max_objects_in_get):
-            response = self._get(batch, properties=properties)
-
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get(batch, properties=properties).get("list", []))
 
         return results
 

@@ -66,12 +66,11 @@ class CalendarEventService(CalendarsService):
                     "updated": timestamp,
                 }
 
-            response = self._create(payload, sendSchedulingMessages=send_scheduling_messages)
+            body = self._create(payload, sendSchedulingMessages=send_scheduling_messages)
 
-            if method_responses := response.get("methodResponses"):
-                result["created"].update(method_responses[0][1].get("created", {}))
-                if not_created := method_responses[0][1].get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -81,14 +80,9 @@ class CalendarEventService(CalendarsService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch).get("list", []))
         else:
-            response = self._get()
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get().get("list", []))
 
         return results
 
@@ -151,12 +145,11 @@ class CalendarEventService(CalendarsService):
                 if (sequence := event.get("sequence")) is not None:
                     payload[event["id"]]["sequence"] = int(sequence)
 
-            response = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
+            body = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -174,12 +167,11 @@ class CalendarEventService(CalendarsService):
         for batch in self.create_batches(list(mapping.items()), self.max_objects_in_set):
             payload = {id: {"calendarIds": calendar_ids} for id, calendar_ids in batch}
 
-            response = self._update(payload)
+            body = self._update(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -189,12 +181,11 @@ class CalendarEventService(CalendarsService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch, sendSchedulingMessages=send_scheduling_messages)
+            body = self._delete(batch, sendSchedulingMessages=send_scheduling_messages)
 
-            if method_responses := response.get("methodResponses"):
-                result["destroyed"].extend(method_responses[0][1].get("destroyed", []))
-                if not_destroyed := method_responses[0][1].get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 
@@ -217,7 +208,7 @@ class CalendarEventService(CalendarsService):
         while len(ids) < limit:
             current_batch_size = min(batch_size, limit - len(ids))
 
-            response = self._query(
+            query_response = self._query(
                 filter,
                 position,
                 current_batch_size,
@@ -227,11 +218,6 @@ class CalendarEventService(CalendarsService):
                 expandRecurrences=expand_recurrences,
             )
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            query_response = method_responses[0][1]
             batch_ids = query_response.get("ids", [])
             ids.extend(batch_ids)
 
@@ -248,12 +234,7 @@ class CalendarEventService(CalendarsService):
     def changes(self, since_state: str) -> dict:
         """Public method to get calendar event changes since a given state."""
 
-        response = self._changes(since_state)
-
-        if method_responses := response.get("methodResponses"):
-            return method_responses[0][1]
-
-        return {}
+        return self._changes(since_state)
 
     def parse(self, blob_ids: list[str]) -> dict:
         """Public method to parse calendar event blobs, handling batching if the number of blob ids exceeds the server's maximum allowed in a single 'get' call."""
@@ -299,11 +280,8 @@ class CalendarEventService(CalendarsService):
 
         base_ids = {}
         for batch in self.create_batches(ids, self.max_objects_in_get):
-            response = self._get(batch, properties=["id", "baseEventId"])
-
-            if method_responses := response.get("methodResponses"):
-                for event in method_responses[0][1].get("list", []):
-                    base_ids[event["id"]] = event.get("baseEventId") or event["id"]
+            for event in self._get(batch, properties=["id", "baseEventId"]).get("list", []):
+                base_ids[event["id"]] = event.get("baseEventId") or event["id"]
 
         return base_ids
 
@@ -387,13 +365,12 @@ class CalendarEventService(CalendarsService):
         if sequence is not None:
             payload[id]["sequence"] = int(sequence)
 
-        response = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
+        body = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
 
         result = {"updated": [], "notUpdated": {}}
-        if method_responses := response.get("methodResponses"):
-            result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-            if not_updated := method_responses[0][1].get("notUpdated", {}):
-                result["notUpdated"].update(not_updated)
+        result["updated"].extend(body.get("updated", {}).keys())
+        if not_updated := body.get("notUpdated", {}):
+            result["notUpdated"].update(not_updated)
 
         return result
 
@@ -420,13 +397,12 @@ class CalendarEventService(CalendarsService):
             }
         }
 
-        response = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
+        body = self._update(payload, sendSchedulingMessages=send_scheduling_messages)
 
         result = {"updated": [], "notUpdated": {}}
-        if method_responses := response.get("methodResponses"):
-            result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-            if not_updated := method_responses[0][1].get("notUpdated", {}):
-                result["notUpdated"].update(not_updated)
+        result["updated"].extend(body.get("updated", {}).keys())
+        if not_updated := body.get("notUpdated", {}):
+            result["notUpdated"].update(not_updated)
 
         return result
 
@@ -445,16 +421,15 @@ class CalendarEventService(CalendarsService):
         recurrence_overrides = event.get("recurrenceOverrides", {}) or {}
         recurrence_overrides.setdefault(recurrence_id, {}).update({"excluded": True})
 
-        response = self._update(
+        body = self._update(
             {id: {"recurrenceOverrides": recurrence_overrides, "updated": utcnow()}},
             sendSchedulingMessages=send_scheduling_messages,
         )
 
         result = {"updated": [], "notUpdated": {}}
-        if method_responses := response.get("methodResponses"):
-            result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-            if not_updated := method_responses[0][1].get("notUpdated", {}):
-                result["notUpdated"].update(not_updated)
+        result["updated"].extend(body.get("updated", {}).keys())
+        if not_updated := body.get("notUpdated", {}):
+            result["notUpdated"].update(not_updated)
 
         return result
 

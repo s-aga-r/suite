@@ -16,28 +16,25 @@ FORBIDDEN = {"type": "forbidden", "description": "You are not authorized to perf
 class EmailServiceChanges(unittest.TestCase):
     """``EmailService.changes`` — unwrap real results, raise on method-level errors."""
 
-    def _service(self, response: dict) -> EmailService:
+    def _service(self, body: dict) -> EmailService:
         service = EmailService("f7", mock.MagicMock())
-        service._exec = mock.MagicMock(return_value=response)
+        service._call_one = mock.MagicMock(return_value=body)
         return service
 
-    def test_returns_first_method_response_body(self):
+    def test_returns_method_response_body(self):
         body = {"created": [], "updated": ["e1"], "destroyed": [], "newState": "s2", "hasMoreChanges": False}
-        service = self._service({"methodResponses": [["Email/changes", body, "0"]]})
+        service = self._service(body)
 
         self.assertEqual(service.changes("s1"), body)
 
     def test_raises_on_method_level_error(self):
-        service = self._service({"methodResponses": [["error", FORBIDDEN, "0"]]})
+        service = self._service({"error": FORBIDDEN})
 
         with self.assertRaises(RuntimeError) as ctx:
             service.changes("s1")
 
         self.assertIn("Email/changes failed", str(ctx.exception))
         self.assertIn("forbidden", str(ctx.exception))
-
-    def test_returns_empty_dict_without_method_responses(self):
-        self.assertEqual(self._service({}).changes("s1"), {})
 
 
 class FetchChanges(unittest.TestCase):

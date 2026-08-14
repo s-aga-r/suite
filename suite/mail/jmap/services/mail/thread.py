@@ -14,15 +14,10 @@ class ThreadService(MailService):
         result = {}
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch, properties=["emailIds"])
-
-                if method_responses := response.get("methodResponses"):
-                    if threads := method_responses[0][1].get("list", []):
-                        result.update({thread["id"]: thread["emailIds"] for thread in threads})
-        else:
-            response = self._get(properties=["emailIds"])
-            if method_responses := response.get("methodResponses"):
-                if threads := method_responses[0][1].get("list", []):
+                if threads := self._get(batch, properties=["emailIds"]).get("list", []):
                     result.update({thread["id"]: thread["emailIds"] for thread in threads})
+        else:
+            if threads := self._get(properties=["emailIds"]).get("list", []):
+                result.update({thread["id"]: thread["emailIds"] for thread in threads})
 
         return result

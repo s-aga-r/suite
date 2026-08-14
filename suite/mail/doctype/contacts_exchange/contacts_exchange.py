@@ -645,9 +645,7 @@ class ContactsExchange(OwnerFromUser, Document):
                 payload[creation_id] = card
                 creation_meta[creation_id] = (card.get("uid", creation_id), destination)
 
-            response = service._create(payload)
-            method_responses = response.get("methodResponses") or []
-            result = method_responses[0][1] if method_responses else {}
+            result = service._create(payload)
 
             batch_failed = result.get("notCreated") or {}
             failed += len(batch_failed)

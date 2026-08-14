@@ -87,10 +87,7 @@ class EmailSubmissionService(CoreService):
 
         results = []
         for batch in self.create_batches(ids, self.max_objects_in_get):
-            response = self._get(batch, properties=properties or self.SUBMISSION_PROPERTIES)
-
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get(batch, properties=properties or self.SUBMISSION_PROPERTIES).get("list", []))
 
         return results
 
@@ -99,11 +96,7 @@ class EmailSubmissionService(CoreService):
 
         from suite.mail.jmap import get_jmap_set_error_message
 
-        response = self._update({submission_id: {"undoStatus": "canceled"}})
-
-        result = {}
-        if method_responses := response.get("methodResponses"):
-            result = method_responses[0][1]
+        result = self._update({submission_id: {"undoStatus": "canceled"}})
 
         if submission_id not in (result.get("updated") or {}):
             raise ValueError(get_jmap_set_error_message(result, "notUpdated", submission_id))

@@ -26,12 +26,11 @@ class AddressBookService(ContactsService):
                 if bool(address_book.get("is_default") or False):
                     kwargs["onSuccessSetIsDefault"] = f"#{address_book['creation_id']}"
 
-            response = self._create(payload, **kwargs)
+            body = self._create(payload, **kwargs)
 
-            if method_responses := response.get("methodResponses"):
-                result["created"].update(method_responses[0][1].get("created", {}))
-                if not_created := method_responses[0][1].get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -41,14 +40,9 @@ class AddressBookService(ContactsService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch).get("list", []))
         else:
-            response = self._get()
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get().get("list", []))
 
         return results
 
@@ -70,12 +64,11 @@ class AddressBookService(ContactsService):
                 if bool(address_book.get("is_default") or False):
                     kwargs["onSuccessSetIsDefault"] = address_book["id"]
 
-            response = self._update(payload, **kwargs)
+            body = self._update(payload, **kwargs)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -84,12 +77,11 @@ class AddressBookService(ContactsService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch, onDestroyRemoveContents=remove_contents)
+            body = self._delete(batch, onDestroyRemoveContents=remove_contents)
 
-            if method_responses := response.get("methodResponses"):
-                result["destroyed"].extend(method_responses[0][1].get("destroyed", []))
-                if not_destroyed := method_responses[0][1].get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 

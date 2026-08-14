@@ -32,12 +32,11 @@ class ContactCardService(ContactsService):
                     "updated": timestamp,
                 }
 
-            response = self._create(payload)
+            body = self._create(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["created"].update(method_responses[0][1].get("created", {}))
-                if not_created := method_responses[0][1].get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -85,14 +84,9 @@ class ContactCardService(ContactsService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch, properties=properties)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch, properties=properties).get("list", []))
         else:
-            response = self._get(properties=properties)
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get(properties=properties).get("list", []))
 
         return results
 
@@ -113,12 +107,11 @@ class ContactCardService(ContactsService):
                     "updated": utcnow(),
                 }
 
-            response = self._update(payload)
+            body = self._update(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -127,12 +120,11 @@ class ContactCardService(ContactsService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch)
+            body = self._delete(batch)
 
-            if method_responses := response.get("methodResponses"):
-                result["destroyed"].extend(method_responses[0][1].get("destroyed", []))
-                if not_destroyed := method_responses[0][1].get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 
@@ -148,13 +140,8 @@ class ContactCardService(ContactsService):
         while len(ids) < limit:
             current_batch_size = min(batch_size, limit - len(ids))
 
-            response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
+            query_response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            query_response = method_responses[0][1]
             batch_ids = query_response.get("ids", [])
             ids.extend(batch_ids)
 
@@ -171,12 +158,7 @@ class ContactCardService(ContactsService):
     def changes(self, since_state: str) -> dict:
         """Public method to get contact card changes since a given state."""
 
-        response = self._changes(since_state)
-
-        if method_responses := response.get("methodResponses"):
-            return method_responses[0][1]
-
-        return {}
+        return self._changes(since_state)
 
     def parse(self, blob_ids: list[str]) -> dict:
         """Public method to parse vCard blobs into JSContact Cards via the JMAP 'ContactCard/parse' method.
@@ -252,13 +234,8 @@ class ContactCardService(ContactsService):
             position = 0
             total = None
             while True:
-                response = self._query(filter, position, len(batch), calculate_total=total is None)
+                query_response = self._query(filter, position, len(batch), calculate_total=total is None)
 
-                method_responses = response.get("methodResponses")
-                if not method_responses:
-                    break
-
-                query_response = method_responses[0][1]
                 page = query_response.get("ids", [])
                 ids.extend(page)
 
@@ -345,12 +322,11 @@ class ContactCardService(ContactsService):
         for batch in self.create_batches(list(mapping.items()), self.max_objects_in_set):
             payload = {id: {"addressBookIds": book_ids} for id, book_ids in batch}
 
-            response = self._update(payload)
+            body = self._update(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 

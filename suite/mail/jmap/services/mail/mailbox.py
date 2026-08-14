@@ -24,12 +24,11 @@ class MailboxService(MailService):
                     "isSubscribed": bool(mailbox.get("is_subscribed") or False),
                 }
 
-            response = self._create(payload)
+            body = self._create(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["created"].update(method_responses[0][1].get("created", {}))
-                if not_created := method_responses[0][1].get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -39,14 +38,9 @@ class MailboxService(MailService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch).get("list", []))
         else:
-            response = self._get()
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get().get("list", []))
 
         return results
 
@@ -65,12 +59,11 @@ class MailboxService(MailService):
                     "isSubscribed": bool(mailbox.get("is_subscribed") or False),
                 }
 
-            response = self._update(payload)
+            body = self._update(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -79,12 +72,11 @@ class MailboxService(MailService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch, onDestroyRemoveEmails=remove_emails)
+            body = self._delete(batch, onDestroyRemoveEmails=remove_emails)
 
-            if method_responses := response.get("methodResponses"):
-                result["destroyed"].extend(method_responses[0][1].get("destroyed", []))
-                if not_destroyed := method_responses[0][1].get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 

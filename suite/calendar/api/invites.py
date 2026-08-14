@@ -125,9 +125,7 @@ def _ensure_on_calendar(service: CalendarEventService, events: list[dict]) -> st
 
     created_ids = []
     if payload:
-        response = service._create(payload, sendSchedulingMessages=False)
-        method_responses = response.get("methodResponses") or []
-        result = method_responses[0][1] if method_responses else {}
+        result = service._create(payload, sendSchedulingMessages=False)
         created_ids = [info["id"] for info in (result.get("created") or {}).values()]
 
         if not_created := result.get("notCreated"):

@@ -12,25 +12,38 @@ the call still succeeds, the fields just stop arriving.
 import unittest
 from unittest import mock
 
+from jmap.core.limits import Limits
+
 from suite.mail.jmap.services.calendars.calendar_event_notification import (
     CalendarEventNotificationService,
 )
 
 
+class _StubCapabilities:
+    """The slice of ``ActiveCapabilities`` the service reads: server limits."""
+
+    def __init__(self, max_objects_in_get: int) -> None:
+        self.limits = Limits(max_objects_in_get=max_objects_in_get)
+
+
 class _StubConnection:
-    """The slice of ``JMAPConnection`` the service reads: server limits, via capabilities."""
+    """The slice of ``JMAPConnection`` the service reads: server limits, via resolved capabilities."""
 
     def __init__(self, max_objects_in_get: int = 500) -> None:
         self.capabilities = {
             "urn:ietf:params:jmap:core": {"maxObjectsInGet": max_objects_in_get},
             "urn:ietf:params:jmap:calendars": {},
         }
+        self._caps = _StubCapabilities(max_objects_in_get)
+
+    def capabilities_for(self, account_id: str | None) -> _StubCapabilities:
+        return self._caps
 
 
 def _response(*ids: str) -> dict:
-    """A ``CalendarEventNotification/get`` response carrying the given notification ids."""
+    """A ``CalendarEventNotification/get`` response body carrying the given notification ids."""
 
-    return {"methodResponses": [["CalendarEventNotification/get", {"list": [{"id": i} for i in ids]}, "0"]]}
+    return {"list": [{"id": i} for i in ids]}
 
 
 class CalendarEventNotificationGetProperties(unittest.TestCase):
@@ -114,7 +127,7 @@ class CalendarEventNotificationGetProperties(unittest.TestCase):
 
         self.assertEqual([r["id"] for r in results], ["n1", "n2", "n3"])
 
-    def test_missing_method_responses_yields_no_results(self):
+    def test_empty_body_yields_no_results(self):
         service = self._service()
         with mock.patch.object(service, "_get", return_value={}):
             self.assertEqual(service.get(["n1"]), [])

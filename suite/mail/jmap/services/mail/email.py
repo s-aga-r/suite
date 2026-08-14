@@ -71,14 +71,9 @@ class EmailService(MailService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch, properties=properties, fetchAllBodyValues=True)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch, properties=properties, fetchAllBodyValues=True).get("list", []))
         else:
-            response = self._get(properties=properties, fetchAllBodyValues=True)
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get(properties=properties, fetchAllBodyValues=True).get("list", []))
 
         return results
 
@@ -110,12 +105,11 @@ class EmailService(MailService):
                         "At least one of 'keywords' or 'mailbox_ids' must be provided for update."
                     )
 
-            response = self._update(payload)
+            body = self._update(payload)
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -124,12 +118,11 @@ class EmailService(MailService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch)
+            body = self._delete(batch)
 
-            if method_responses := response.get("methodResponses"):
-                result["destroyed"].extend(method_responses[0][1].get("destroyed", []))
-                if not_destroyed := method_responses[0][1].get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 
@@ -146,13 +139,8 @@ class EmailService(MailService):
         while len(ids) < limit:
             current_batch_size = min(batch_size, limit - len(ids))
 
-            response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
+            query_response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            query_response = method_responses[0][1]
             batch_ids = query_response.get("ids", [])
             ids.extend(batch_ids)
 
@@ -169,12 +157,7 @@ class EmailService(MailService):
     def changes(self, since_state: str) -> dict:
         """Public method to get changes to emails since a given state."""
 
-        response = self._changes(since_state)
-
-        if method_responses := response.get("methodResponses"):
-            return method_responses[0][1]
-
-        return {}
+        return self._changes(since_state)
 
     def search(self, text: str, limit: int = 50, separate_requests: bool = False) -> list[str]:
         """Public method to search for emails matching the given text in subject, to, cc, bcc, body or text."""

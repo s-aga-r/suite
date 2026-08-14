@@ -27,11 +27,8 @@ class VacationResponseService(CoreService):
     def get(self) -> dict:
         """Public method to get the vacation response settings, returning a simplified dictionary with the relevant information."""
 
-        response = self._get()
-
-        if method_responses := response.get("methodResponses"):
-            if vacation_responses := method_responses[0][1].get("list"):
-                return vacation_responses[0]
+        if vacation_responses := self._get().get("list"):
+            return vacation_responses[0]
 
         return {}
 
@@ -49,12 +46,11 @@ class VacationResponseService(CoreService):
             }
         }
 
-        response = self._update(payload)
+        body = self._update(payload)
 
         result = {"updated": [], "notUpdated": {}}
-        if method_responses := response.get("methodResponses"):
-            result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-            if not_updated := method_responses[0][1].get("notUpdated", {}):
-                result["notUpdated"].update(not_updated)
+        result["updated"].extend(body.get("updated", {}).keys())
+        if not_updated := body.get("notUpdated", {}):
+            result["notUpdated"].update(not_updated)
 
         return result

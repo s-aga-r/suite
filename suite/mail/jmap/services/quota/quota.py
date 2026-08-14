@@ -29,14 +29,9 @@ class QuotaService(CoreService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch).get("list", []))
         else:
-            response = self._get()
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get().get("list", []))
 
         return results
 
@@ -52,13 +47,8 @@ class QuotaService(CoreService):
         while len(ids) < limit:
             current_batch_size = min(batch_size, limit - len(ids))
 
-            response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
+            query_response = self._query(filter, position, current_batch_size, sort, calculate_total=total is None)
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            query_response = method_responses[0][1]
             batch_ids = query_response.get("ids", [])
             ids.extend(batch_ids)
 
@@ -75,9 +65,4 @@ class QuotaService(CoreService):
     def changes(self, since_state: str) -> dict:
         """Public method to get quota changes since a given state."""
 
-        response = self._changes(since_state)
-
-        if method_responses := response.get("methodResponses"):
-            return method_responses[0][1]
-
-        return {}
+        return self._changes(since_state)

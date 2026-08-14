@@ -4,6 +4,11 @@ from functools import cached_property
 from typing import Any, ClassVar, Literal
 
 from cachetools import TTLCache
+from jmap.batch import Batch
+from jmap.chunking import ChunkedHandle
+from jmap.core.errors import MethodError
+from jmap.core.ids import Id
+from jmap.core.invocation import Handle
 
 from suite.mail.jmap.client import JMAPConnection
 
@@ -48,6 +53,9 @@ class CoreService(CoreServiceHelper):
     _cache = TTLCache(maxsize=1_00_000, ttl=1 * 60 * 60)
 
     capabilities: ClassVar[list[str]] = ["urn:ietf:params:jmap:core"]
+
+    # PushSubscription requests are user-scoped and carry no accountId; that service flips this off.
+    account_scoped: ClassVar[bool] = True
 
     def __init__(self, account: str, connection: JMAPConnection) -> None:
         """Initializes the CoreService with the provided account ID and JMAP connection.
@@ -107,6 +115,12 @@ class CoreService(CoreServiceHelper):
         return self._cache[self.account]
 
     @property
+    def _caps(self):
+        """The resolved capabilities for this service's account (or session-wide when user-scoped)."""
+
+        return self.connection.capabilities_for(self.account if self.account_scoped else None)
+
+    @property
     def core(self) -> dict:
         """Returns the core capabilities of the JMAP server."""
 
@@ -116,43 +130,43 @@ class CoreService(CoreServiceHelper):
     def max_calls_in_request(self) -> int:
         """Returns the maximum number of method calls allowed in a single JMAP request."""
 
-        return self.core.get("maxCallsInRequest") or 16
+        return self._caps.limits.max_calls_in_request
 
     @property
     def max_size_upload(self) -> int:
         """Returns the maximum size of an upload allowed by the JMAP server, in bytes."""
 
-        return self.core.get("maxSizeUpload") or 50_000_000
+        return self._caps.limits.max_size_upload
 
     @property
     def max_concurrent_upload(self) -> int:
         """Returns the maximum number of concurrent uploads allowed by the JMAP server."""
 
-        return self.core.get("maxConcurrentUpload") or 4
+        return self._caps.limits.max_concurrent_upload
 
     @property
     def max_size_request(self) -> int:
         """Returns the maximum size of a JMAP request allowed by the server, in bytes."""
 
-        return self.core.get("maxSizeRequest") or 10_000_000
+        return self._caps.limits.max_size_request
 
     @property
     def max_concurrent_requests(self) -> int:
         """Returns the maximum number of concurrent requests allowed by the JMAP server."""
 
-        return self.core.get("maxConcurrentRequests") or 4
+        return self._caps.limits.max_concurrent_requests
 
     @property
     def max_objects_in_get(self) -> int:
         """Returns the maximum number of objects that can be retrieved in a single JMAP 'get' method call."""
 
-        return self.core.get("maxObjectsInGet") or 500
+        return self._caps.limits.max_objects_in_get
 
     @property
     def max_objects_in_set(self) -> int:
         """Returns the maximum number of objects that can be created, updated, or destroyed in a single JMAP 'set' method call."""
 
-        return self.core.get("maxObjectsInSet") or 500
+        return self._caps.limits.max_objects_in_set
 
     @property
     def account_ids(self) -> list[str]:
@@ -302,26 +316,9 @@ class CoreService(CoreServiceHelper):
 
         session_state = response["sessionState"]
         if self.connection.state != session_state:
-            self.connection._session_discovery()
-            self._sync_accounts_on_state_change()
+            self.connection.handle_session_drift()
 
         return response
-
-    def _sync_accounts_on_state_change(self) -> None:
-        """Resync the user's JMAP Accounts after the JMAP session state changes.
-
-        The session state only changes when the set of accounts available to the user changes
-        on the JMAP server, so a change here means the local JMAP Account documents and User
-        Account links may be stale and need reconciling against the freshly discovered session.
-        """
-
-        if not self.connection.user:
-            return
-
-        # Lazy import to avoid a circular dependency (jmap_account -> suite.mail.jmap -> core).
-        from suite.mail.doctype.jmap_account.jmap_account import sync_jmap_accounts
-
-        sync_jmap_accounts(self.connection.user, self.connection.accounts)
 
     def _exec(self, action: Literal["get", "set", "query", "changes", "upload", "lookup"], **payload) -> dict:
         payload = {**{k: v for k, v in payload.items() if v is not None}}
@@ -334,25 +331,88 @@ class CoreService(CoreServiceHelper):
             method_calls=[[f"{self._type}/{action}", payload, "0"]],
         )
 
+    def _new_batch(self) -> Batch:
+        """Opens a batch scoped to this service's account; queue calls on it, then `_run` it."""
+
+        return Batch(self._caps)
+
+    def _run(self, batch: Batch) -> None:
+        """Executes a batch and resyncs local account state if the server session drifted."""
+
+        with self.connection.map_transport_errors():
+            self.connection.client.execute(batch)
+
+        if self.connection.client.session_stale:
+            self.connection.handle_session_drift()
+
+    @staticmethod
+    def _read(handle: Handle) -> dict:
+        """Returns a handle's raw method-response body, or `{"error": ...}` for a method-level error."""
+
+        try:
+            if isinstance(handle, ChunkedHandle):
+                return CoreService._merge_chunk_bodies(handle)
+            return handle.result
+        except MethodError as e:
+            return {"error": e.arguments}
+
+    @staticmethod
+    def _merge_chunk_bodies(handle: ChunkedHandle) -> dict:
+        """Merges the raw bodies of an auto-chunked '/get' back into one response body.
+
+        Services pre-batch ids at `max_objects_in_get`, so chunking only triggers as a safety net
+        when a server lowers its limit between the read and the request.
+        """
+
+        merged: dict = {}
+        for chunk in handle.chunks:
+            for key, value in chunk.result.items():
+                if isinstance(value, list) and isinstance(merged.get(key), list):
+                    merged[key].extend(value)
+                else:
+                    merged.setdefault(key, value)
+
+        return merged
+
+    @staticmethod
+    def _omit_none(args: dict) -> dict:
+        """Drops top-level None arguments (an omitted JMAP argument, not an explicit null)."""
+
+        return {k: v for k, v in args.items() if v is not None}
+
+    def _call_one(self, name: str, args: dict) -> dict:
+        """Queues a single method call, executes it, and returns its raw response body."""
+
+        batch = self._new_batch()
+        handle = batch.add(name, self._omit_none(args))
+        self._run(batch)
+        return self._read(handle)
+
+    def call(self, name: str, args: dict) -> dict:
+        """Public escape hatch for methods without a dedicated wrapper (e.g. Email/import),
+        returning the raw response body."""
+
+        return self._call_one(name, args)
+
     def _create(self, create: dict, **kwargs) -> dict:
         """Internal method to create objects of the specified type using the JMAP 'set' method."""
 
-        return self._exec("set", create=create, **kwargs)
+        return self._call_one(f"{self._type}/set", {"create": create, **kwargs})
 
     def _get(self, ids: list[str] | None = None, properties: list[str] | None = None, **kwargs) -> dict:
         """Internal method to get objects of the specified type using the JMAP 'get' method, optionally filtering by a list of IDs."""
 
-        return self._exec("get", ids=ids, properties=properties, **kwargs)
+        return self._call_one(f"{self._type}/get", {"ids": ids, "properties": properties, **kwargs})
 
     def _update(self, update: dict, **kwargs) -> dict:
         """Internal method to update objects of the specified type using the JMAP 'set' method."""
 
-        return self._exec("set", update=update, **kwargs)
+        return self._call_one(f"{self._type}/set", {"update": update, **kwargs})
 
     def _delete(self, destroy: list[str], **kwargs) -> dict:
         """Internal method to delete objects of the specified type using the JMAP 'set' method, filtering by a list of IDs."""
 
-        return self._exec("set", destroy=destroy, **kwargs)
+        return self._call_one(f"{self._type}/set", {"destroy": destroy, **kwargs})
 
     def _query(
         self,
@@ -365,43 +425,44 @@ class CoreService(CoreServiceHelper):
     ) -> dict:
         """Internal method to query objects of the specified type using the JMAP 'query' method, with support for filtering, sorting, and pagination."""
 
-        return self._exec(
-            "query",
-            filter=filter,
-            position=position,
-            limit=limit,
-            sort=sort,
-            calculateTotal=calculate_total,
-            **kwargs,
+        return self._call_one(
+            f"{self._type}/query",
+            {
+                "filter": filter,
+                "position": position,
+                "limit": limit,
+                "sort": sort,
+                "calculateTotal": calculate_total,
+                **kwargs,
+            },
         )
 
     def _changes(self, since_state: str) -> dict:
         """Internal method to get changes of the specified type since a given state using the JMAP 'changes' method.
 
-        A method-level failure (e.g. `forbidden`, `cannotCalculateChanges`) comes back as an
-        `["error", {...}]` method response; raise instead of returning it, since every caller
-        unwraps the first method response as if it were a changes result.
+        A method-level failure (e.g. `forbidden`, `cannotCalculateChanges`) raises instead of
+        returning, since every caller reads the body as if it were a changes result.
         """
 
-        response = self._exec("changes", sinceState=since_state)
+        body = self._call_one(f"{self._type}/changes", {"sinceState": since_state})
 
-        for name, body, _call_id in response.get("methodResponses") or []:
-            if name == "error":
-                raise RuntimeError(f"{self._type}/changes failed: {body}")
+        if "error" in body:
+            raise RuntimeError(f"{self._type}/changes failed: {body['error']}")
 
-        return response
+        return body
 
     def upload_blob(self, blob: bytes | str, content_type: str = "message/rfc822") -> dict:
         """Uploads a blob to the JMAP server using the upload URL, and returns the response containing the blob ID and other metadata."""
 
-        upload_url = self.connection.upload_url.format(accountId=self.account)
-        return self.connection.request(
-            method="POST",
-            url=upload_url,
-            headers={"Content-Type": content_type},
-            data=blob,
-            return_json=True,
-        )
+        if isinstance(blob, str):
+            blob = blob.encode("utf-8")
+
+        with self.connection.map_transport_errors():
+            result = self.connection.client.upload(
+                blob, content_type=content_type, account_id=Id(self.account)
+            )
+
+        return result.to_wire()
 
     def upload_blobs_concurrently(self, blobs: list[tuple[bytes | str, str]]) -> list[dict]:
         """Uploads multiple blobs concurrently to the JMAP server, given a list of tuples containing the blob data and content type, and returns a list of responses containing the blob IDs and other metadata."""
@@ -432,11 +493,10 @@ class CoreService(CoreServiceHelper):
     def download_blob(self, blob_id: str, name: str | None = None) -> bytes:
         """Downloads a blob from the JMAP server using the download URL, given the blob ID and an optional name for the downloaded file, and returns the content of the blob as bytes."""
 
-        name = name or "blob"
-        download_url = self.connection.download_url.format(
-            accountId=self.account, blobId=blob_id, name=name, type="application/octet-stream"
-        )
-        return self.connection.request(method="GET", url=download_url, return_json=False)
+        with self.connection.map_transport_errors():
+            return self.connection.client.download(
+                blob_id, name=name or "blob", account_id=Id(self.account)
+            )
 
     def download_blobs_concurrently(self, blobs: list[tuple[str, str | None]]) -> dict[str, bytes]:
         """Downloads multiple blobs concurrently from the JMAP server, given a list of tuples containing blob IDs and optional names, and returns a dictionary mapping blob IDs to their downloaded content."""

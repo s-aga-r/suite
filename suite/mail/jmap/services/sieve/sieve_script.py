@@ -41,17 +41,15 @@ class SieveScriptService(CoreService):
                 if bool(sieve_script.get("is_active") or False):
                     kwargs["onSuccessActivateScript"] = f"#{sieve_script['creation_id']}"
 
-            response = self._create(payload, **kwargs)
+            body = self._create(payload, **kwargs)
 
-            if method_responses := response.get("methodResponses"):
-                name, body = method_responses[0][0], method_responses[0][1]
-                if name == "error":
-                    result["error"] = body
-                    break
+            if "error" in body:
+                result["error"] = body["error"]
+                break
 
-                result["created"].update(body.get("created", {}))
-                if not_created := body.get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -61,14 +59,9 @@ class SieveScriptService(CoreService):
         results = []
         if ids:
             for batch in self.create_batches(ids, self.max_objects_in_get):
-                response = self._get(batch)
-
-                if method_responses := response.get("methodResponses"):
-                    results.extend(method_responses[0][1].get("list", []))
+                results.extend(self._get(batch).get("list", []))
         else:
-            response = self._get()
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(self._get().get("list", []))
 
         return results
 
@@ -97,17 +90,15 @@ class SieveScriptService(CoreService):
                     "Cannot specify both 'onSuccessActivateScript' and 'onSuccessDeactivateScript' at the same time."
                 )
 
-            response = self._update(payload, **kwargs)
+            body = self._update(payload, **kwargs)
 
-            if method_responses := response.get("methodResponses"):
-                name, body = method_responses[0][0], method_responses[0][1]
-                if name == "error":
-                    result["error"] = body
-                    break
+            if "error" in body:
+                result["error"] = body["error"]
+                break
 
-                result["updated"].extend(body.get("updated", {}).keys())
-                if not_updated := body.get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
@@ -116,17 +107,15 @@ class SieveScriptService(CoreService):
 
         result = {"destroyed": [], "notDestroyed": {}}
         for batch in self.create_batches(ids, self.max_objects_in_set):
-            response = self._delete(batch)
+            body = self._delete(batch)
 
-            if method_responses := response.get("methodResponses"):
-                name, body = method_responses[0][0], method_responses[0][1]
-                if name == "error":
-                    result["error"] = body
-                    break
+            if "error" in body:
+                result["error"] = body["error"]
+                break
 
-                result["destroyed"].extend(body.get("destroyed", []))
-                if not_destroyed := body.get("notDestroyed", {}):
-                    result["notDestroyed"].update(not_destroyed)
+            result["destroyed"].extend(body.get("destroyed", []))
+            if not_destroyed := body.get("notDestroyed", {}):
+                result["notDestroyed"].update(not_destroyed)
 
         return result
 
@@ -146,13 +135,8 @@ class SieveScriptService(CoreService):
         while len(ids) < limit:
             current_batch_size = min(batch_size, limit - len(ids))
 
-            response = self._query(_filter, position, current_batch_size, calculate_total=total is None)
+            query_response = self._query(_filter, position, current_batch_size, calculate_total=total is None)
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            query_response = method_responses[0][1]
             batch_ids = query_response.get("ids", [])
             ids.extend(batch_ids)
 
