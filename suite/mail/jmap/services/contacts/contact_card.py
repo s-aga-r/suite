@@ -175,30 +175,13 @@ class ContactCardService(ContactsService):
         batch_size = min(len(remaining), self.max_objects_in_get) or 1
         while remaining:
             batch = remaining[:batch_size]
-            response = self._call(
-                self.capabilities,
-                [
-                    [
-                        f"{self.type}/parse",
-                        {
-                            "accountId": self.account,
-                            "blobIds": batch,
-                        },
-                        "0",
-                    ]
-                ],
-            )
+            body = self.call(f"{self.type}/parse", {"blobIds": batch})
 
-            method_responses = response.get("methodResponses")
-            if not method_responses:
-                break
-
-            name, body = method_responses[0][0], method_responses[0][1]
-            if name == "error":
-                if body.get("type") == "requestTooLarge" and batch_size > 1:
+            if error := body.get("error"):
+                if error.get("type") == "requestTooLarge" and batch_size > 1:
                     batch_size = max(1, batch_size // 2)
                     continue
-                raise RuntimeError(f"ContactCard/parse failed: {body}")
+                raise RuntimeError(f"ContactCard/parse failed: {error}")
 
             result["parsed"].update(body.get("parsed", {}))
             # The server reports notFound/notParsable as blob-id arrays; keep the
@@ -287,24 +270,11 @@ class ContactCardService(ContactsService):
                 if remove_address_book_id:
                     payload[f"addressBookIds/{remove_address_book_id}"] = None
 
-            response = self._call(
-                self.capabilities,
-                [
-                    [
-                        f"{self.type}/set",
-                        {
-                            "accountId": self.account,
-                            "update": {id: payload for id in batch},
-                        },
-                        "0",
-                    ]
-                ],
-            )
+            body = self._update({id: payload for id in batch})
 
-            if method_responses := response.get("methodResponses"):
-                result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-                if not_updated := method_responses[0][1].get("notUpdated", {}):
-                    result["notUpdated"].update(not_updated)
+            result["updated"].extend(body.get("updated", {}).keys())
+            if not_updated := body.get("notUpdated", {}):
+                result["notUpdated"].update(not_updated)
 
         return result
 
