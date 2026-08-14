@@ -7,15 +7,6 @@ class SieveScriptService(CoreService):
     """Service for handling sieve script-related functionality based on the JMAP server capabilities."""
 
     type: ClassVar[str] = "SieveScript"
-    capabilities: ClassVar[list[str]] = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:sieve"]
-
-    def __post_init__(self) -> None:
-        """Post-initialization to check if the JMAP server supports the Sieve capability and raise an error if not."""
-
-        super().__post_init__()
-
-        if "urn:ietf:params:jmap:sieve" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the Sieve capability.")
 
     @property
     def primary_account_id(self) -> str:

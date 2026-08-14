@@ -31,28 +31,10 @@ class CoreServiceHelper:
         return [{k: d[k] for k in keys[i : i + batch_size]} for i in range(0, len(keys), batch_size)]
 
 
-class CallIdGenerator:
-    """Utility class to generate unique call IDs for JMAP method calls."""
-
-    def __init__(self, start: int = 0) -> None:
-        """Initializes the CallIdGenerator with an optional starting value for the call ID counter."""
-
-        self._value = start
-
-    def next(self) -> str:
-        """Generates the next unique call ID as a string, incrementing the internal counter for each call."""
-
-        val = str(self._value)
-        self._value += 1
-        return val
-
-
 class CoreService(CoreServiceHelper):
     """Core service for JMAP operations, providing common functionality and properties."""
 
     _cache = TTLCache(maxsize=1_00_000, ttl=1 * 60 * 60)
-
-    capabilities: ClassVar[list[str]] = ["urn:ietf:params:jmap:core"]
 
     # PushSubscription requests are user-scoped and carry no accountId; that service flips this off.
     account_scoped: ClassVar[bool] = True
@@ -66,12 +48,6 @@ class CoreService(CoreServiceHelper):
 
         self.account = account
         self.connection = connection
-
-    def __post_init__(self) -> None:
-        """Post-initialization to check if the JMAP server supports the required capabilities and raise an error if not."""
-
-        if "urn:ietf:params:jmap:core" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the Core capability.")
 
     @classmethod
     def invalidate_cache(
@@ -119,12 +95,6 @@ class CoreService(CoreServiceHelper):
         """The resolved capabilities for this service's account (or session-wide when user-scoped)."""
 
         return self.connection.capabilities_for(self.account if self.account_scoped else None)
-
-    @property
-    def core(self) -> dict:
-        """Returns the core capabilities of the JMAP server."""
-
-        return self.connection.capabilities["urn:ietf:params:jmap:core"]
 
     @property
     def max_calls_in_request(self) -> int:
@@ -245,91 +215,6 @@ class CoreService(CoreServiceHelper):
         from suite.mail.jmap.services.calendars.participant_identity import ParticipantIdentityService
 
         return ParticipantIdentityService(self.account, self.connection).get()
-
-    def validate_capabilities(self, required_capabilities: list[str], raise_exception: bool = False) -> bool:
-        """Validates that the required capabilities are supported by the JMAP server."""
-
-        capabilities = self.connection.capabilities
-
-        for capability in required_capabilities:
-            if capability not in capabilities:
-                if raise_exception:
-                    raise ValueError(
-                        f"Required capability '{capability}' is not supported by the JMAP server."
-                    )
-
-                return False
-
-        return True
-
-    def validate_method_calls(
-        self, method_calls: list[list[str | dict]], raise_exception: bool = False
-    ) -> bool:
-        """Validates the format and content of the method calls in a JMAP request."""
-
-        if not method_calls or len(method_calls) > self.max_calls_in_request:
-            if raise_exception:
-                raise ValueError("Invalid number of method calls.")
-            return False
-
-        call_ids = []
-        for method_call in method_calls:
-            if not isinstance(method_call, list) or len(method_call) != 3:
-                if raise_exception:
-                    raise ValueError("Invalid method call format.")
-                return False
-
-            if (
-                not isinstance(method_call[0], str)
-                or not isinstance(method_call[1], dict)
-                or not isinstance(method_call[2], str)
-            ):
-                if raise_exception:
-                    raise ValueError("Invalid method call format.")
-                return False
-
-            if method_call[2] in call_ids:
-                if raise_exception:
-                    raise ValueError("Duplicate method call ID.")
-                return False
-
-            call_ids.append(method_call[2])
-
-        return True
-
-    def _call(self, capabilities: list[str], method_calls: list[list[str | dict]], **kwargs) -> dict:
-        """Sends a JMAP request to the server with the specified capabilities and method calls."""
-
-        self.validate_capabilities(capabilities, raise_exception=True)
-        self.validate_method_calls(method_calls, raise_exception=True)
-
-        payload = {"using": capabilities, "methodCalls": method_calls}
-
-        response = self.connection.request(
-            method="POST",
-            url=self.connection.api_url,
-            headers={"Content-Type": "application/json"},
-            json=payload,
-            return_json=True,
-            **kwargs,
-        )
-
-        session_state = response["sessionState"]
-        if self.connection.state != session_state:
-            self.connection.handle_session_drift()
-
-        return response
-
-    def _exec(self, action: Literal["get", "set", "query", "changes", "upload", "lookup"], **payload) -> dict:
-        payload = {**{k: v for k, v in payload.items() if v is not None}}
-
-        if self._type != "PushSubscription":
-            payload["accountId"] = self.account
-
-        return self._call(
-            capabilities=self.capabilities,
-            method_calls=[[f"{self._type}/{action}", payload, "0"]],
-        )
 
     def _new_batch(self) -> Batch:
         """Opens a batch scoped to this service's account; queue calls on it, then `_run` it."""

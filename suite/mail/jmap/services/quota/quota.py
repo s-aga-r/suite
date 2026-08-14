@@ -7,15 +7,6 @@ class QuotaService(CoreService):
     """Service for handling quota-related functionality based on the JMAP server capabilities."""
 
     type: ClassVar[str] = "Quota"
-    capabilities: ClassVar[list[str]] = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:quota"]
-
-    def __post_init__(self) -> None:
-        """Post-initialization to check if the JMAP server supports the Quota capability and raise an error if not."""
-
-        super().__post_init__()
-
-        if "urn:ietf:params:jmap:quota" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the Quota capability.")
 
     @property
     def primary_account_id(self) -> str:

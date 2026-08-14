@@ -15,23 +15,7 @@ class EmailSubmissionService(CoreService):
     """Service for handling email submission-related functionality based on the JMAP server capabilities."""
 
     type: ClassVar[str] = "EmailSubmission"
-    capabilities: ClassVar[list[str]] = [
-        "urn:ietf:params:jmap:core",
-        "urn:ietf:params:jmap:mail",
-        "urn:ietf:params:jmap:submission",
-    ]
     SUBMISSION_PROPERTIES: ClassVar[list[str]] = ["id", "emailId", "undoStatus", "sendAt"]
-
-    def __post_init__(self) -> None:
-        """Post-initialization to check if the JMAP server supports the Mail and EmailSubmission capability and raise an error if not."""
-
-        super().__post_init__()
-
-        if "urn:ietf:params:jmap:mail" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the Mail capability.")
-
-        if "urn:ietf:params:jmap:submission" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the EmailSubmission capability.")
 
     @property
     def primary_account_id(self) -> str:

@@ -8,15 +8,6 @@ class BlobService(CoreService):
     """Service for handling blob-related functionality based on the JMAP server capabilities."""
 
     type: ClassVar[str] = "Blob"
-    capabilities: ClassVar[list[str]] = ["urn:ietf:params:jmap:core", "urn:ietf:params:jmap:blob"]
-
-    def __post_init__(self) -> None:
-        """Post-initialization to check if the JMAP server supports the Blob capability and raise an error if not."""
-
-        super().__post_init__()
-
-        if "urn:ietf:params:jmap:blob" not in self.connection.capabilities:
-            raise NotImplementedError("The JMAP server does not support the Blob capability.")
 
     @property
     def primary_account_id(self) -> str:

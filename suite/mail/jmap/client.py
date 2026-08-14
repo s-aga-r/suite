@@ -266,49 +266,6 @@ class JMAPConnection:
 
         return self._session_obj.state
 
-    def request(
-        self,
-        method: str,
-        url: str,
-        *,
-        headers: dict | None = None,
-        json: dict | None = None,
-        data: bytes | str | None = None,
-        params: dict | None = None,
-        timeout: float | tuple[float, float] | None = None,
-        return_json: bool = True,
-        **kwargs,
-    ) -> dict | bytes:
-        """Sends a request to the JMAP server with the specified parameters, and returns the response."""
-
-        if timeout is None:
-            timeout = httpx.USE_CLIENT_DEFAULT
-        elif isinstance(timeout, tuple):
-            timeout = httpx.Timeout(
-                connect=timeout[0], read=timeout[1], write=timeout[1], pool=timeout[0]
-            )
-
-        try:
-            response = self._http.request(
-                method=method,
-                url=url,
-                headers=headers or {},
-                json=json,
-                content=data.encode("utf-8") if isinstance(data, str) else data,
-                params=params,
-                timeout=timeout,
-                **kwargs,
-            )
-        except httpx.TransportError as e:
-            raise MailServerUnavailableError() from e
-
-        _raise_for_status(response)
-
-        if return_json:
-            return response.json()
-
-        return response.content
-
 
 def _raise_for_status(response: httpx.Response) -> None:
     """Raises an HTTPStatusError if the response status code indicates an error.
