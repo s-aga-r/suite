@@ -154,26 +154,7 @@ class SieveScriptService(CoreService):
         """Public method to validate a sieve script's content."""
 
         blob = self.upload_blob(content.encode("utf-8"), "application/sieve")
-        response = self._call(
-            self.capabilities,
-            [
-                [
-                    f"{self.type}/validate",
-                    {
-                        "accountId": self.account,
-                        "blobId": blob["blobId"],
-                    },
-                    "0",
-                ]
-            ],
-        )
 
-        if method_responses := response.get("methodResponses"):
-            name, body = method_responses[0][0], method_responses[0][1]
-
-            # A method-level error carries `{type, description}` directly, whereas a successful
-            # validate call reports the outcome in an `error` key. Normalise so callers only
-            # have to look at `error`, otherwise a failed call reads as a valid script.
-            return {"error": body} if name == "error" else body
-
-        return {}
+        # A successful validate call reports the outcome in an `error` key, and a method-level
+        # error surfaces under the same key via `call`, so callers only have to look at `error`.
+        return self.call(f"{self.type}/validate", {"blobId": blob["blobId"]})

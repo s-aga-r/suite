@@ -30,12 +30,11 @@ class BlobService(CoreService):
         result = {"created": {}, "notCreated": {}}
         for batch in self.batch_dict(blobs, self.max_objects_in_set):
             payload = {creation_id: upload.to_json() for creation_id, upload in batch.items()}
-            response = self._exec("upload", create=payload)
+            body = self._call_one(f"{self._type}/upload", {"create": payload})
 
-            if method_responses := response.get("methodResponses"):
-                result["created"].update(method_responses[0][1].get("created", {}))
-                if not_created := method_responses[0][1].get("notCreated", {}):
-                    result["notCreated"].update(not_created)
+            result["created"].update(body.get("created", {}))
+            if not_created := body.get("notCreated", {}):
+                result["notCreated"].update(not_created)
 
         return result
 
@@ -53,9 +52,10 @@ class BlobService(CoreService):
 
         results = []
         for batch in self.create_batches(ids, self.max_objects_in_get):
-            response = self._exec("lookup", ids=batch, typeNames=type_names)
-
-            if method_responses := response.get("methodResponses"):
-                results.extend(method_responses[0][1].get("list", []))
+            results.extend(
+                self._call_one(f"{self._type}/lookup", {"ids": batch, "typeNames": type_names}).get(
+                    "list", []
+                )
+            )
 
         return results
