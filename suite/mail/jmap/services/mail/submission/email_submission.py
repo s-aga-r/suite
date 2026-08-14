@@ -1,8 +1,12 @@
 from typing import ClassVar
 
+from jmap.batch import Batch
+from jmap.core.ids import CreationRef
+from jmap.core.invocation import Handle
+
 from suite import __version__
 from suite.mail.jmap.models import EmailCreateModel
-from suite.mail.jmap.services.core import CallIdGenerator, CoreService
+from suite.mail.jmap.services.core import CoreService
 from suite.mail.jmap.services.mail.identity import IdentityService
 from suite.mail.jmap.services.mail.mailbox import MailboxService
 
@@ -123,11 +127,8 @@ class EmailSubmissionService(CoreService):
         identity_id = identity_service.get_identity_id_by_email(from_email, raise_exception=True)
 
         submit_ref = f"submit-{envelope_id}"
-        # Not self._create — this service overrides it as the batch-compose hook used by
-        # EmailService.create; go straight to the generic 'set' primitive instead.
-        response = self._exec(
-            "set",
-            create={
+        result = self._create(
+            {
                 submit_ref: {
                     "identityId": identity_id,
                     "emailId": email_id,
@@ -135,12 +136,8 @@ class EmailSubmissionService(CoreService):
                         from_email, rcpt_emails, envelope_id, priority, hold_until
                     ),
                 }
-            },
+            }
         )
-
-        result = {}
-        if method_responses := response.get("methodResponses"):
-            result = method_responses[0][1]
 
         created = (result.get("created") or {}).get(submit_ref)
         if not created:
@@ -148,12 +145,10 @@ class EmailSubmissionService(CoreService):
 
         return created
 
-    def _create(
-        self, emails: list[EmailCreateModel], draft_refs: dict[str, str], call_id_gen: CallIdGenerator
-    ) -> list:
-        """Creates email submissions for the given list of EmailCreateModel instances and returns the method calls for the JMAP request."""
-
-        method_calls = []
+    def _queue_submissions(
+        self, batch: Batch, emails: list[EmailCreateModel], draft_refs: dict[str, str]
+    ) -> list[Handle]:
+        """Queues email submissions for the given drafts on the shared batch and returns their handles."""
 
         identity_service = IdentityService(self.account, self.connection)
         mailbox_service = MailboxService(self.account, self.connection)
@@ -188,7 +183,7 @@ class EmailSubmissionService(CoreService):
 
             create_payload[submit_ref] = {
                 "identityId": identity_id,
-                "emailId": f"#{draft_ref}",
+                "emailId": CreationRef(draft_ref),
                 "envelope": self._build_envelope(
                     from_email=email.from_email,
                     rcpt_emails={r.email for r in email.recipients},
@@ -226,18 +221,15 @@ class EmailSubmissionService(CoreService):
                 if target_id:
                     on_success_update.setdefault(target_id, {})[f"keywords/{keyword}"] = True
 
-        if create_payload:
-            payload = {
-                "accountId": self.account,
-                "create": create_payload,
-            }
+        if not create_payload:
+            return []
 
-            if on_success_update:
-                payload["onSuccessUpdateEmail"] = on_success_update
+        args = {"create": create_payload}
 
-            if on_success_destroy:
-                payload["onSuccessDestroyEmail"] = on_success_destroy
+        if on_success_update:
+            args["onSuccessUpdateEmail"] = on_success_update
 
-            method_calls.append(["EmailSubmission/set", payload, call_id_gen.next()])
+        if on_success_destroy:
+            args["onSuccessDestroyEmail"] = on_success_destroy
 
-        return method_calls
+        return [batch.add("EmailSubmission/set", args)]

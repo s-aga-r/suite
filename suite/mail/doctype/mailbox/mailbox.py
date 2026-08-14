@@ -352,24 +352,14 @@ def update_mailbox_position(
 
     result = {"updated": [], "notUpdated": {}}
     for batch in service.batch_dict(updates, service.max_objects_in_set):
-        response = service._call(
-            capabilities=service.capabilities,
-            method_calls=[
-                [
-                    f"{service.type}/set",
-                    {
-                        "accountId": service.account,
-                        "update": {k: {"sortOrder": v} for k, v in batch.items()},
-                    },
-                    "0",
-                ]
-            ],
+        body = service.call(
+            f"{service.type}/set",
+            {"update": {k: {"sortOrder": v} for k, v in batch.items()}},
         )
 
-        if method_responses := response.get("methodResponses"):
-            result["updated"].extend(method_responses[0][1].get("updated", {}).keys())
-            if not_updated := method_responses[0][1].get("notUpdated", {}):
-                result["notUpdated"].update(not_updated)
+        result["updated"].extend(body.get("updated", {}).keys())
+        if not_updated := body.get("notUpdated", {}):
+            result["notUpdated"].update(not_updated)
 
     title = _("Mailbox Position Update Error")
     if not result.get("updated"):

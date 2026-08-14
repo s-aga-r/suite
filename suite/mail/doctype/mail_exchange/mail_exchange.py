@@ -982,18 +982,7 @@ class MailExchange(OwnerFromUser, Document):
                 }
                 targets[f"e{i}"] = {mid: True for mid in meta.mailbox_ids}
 
-            response = service._call(
-                capabilities=service.capabilities,
-                method_calls=[
-                    [
-                        f"{service.type}/import",
-                        {"accountId": service.account, "emails": emails},
-                        "0",
-                    ]
-                ],
-            )
-            method_responses = response.get("methodResponses") or []
-            result = method_responses[0][1] if method_responses else {}
+            result = service.call(f"{service.type}/import", {"emails": emails})
 
             for creation_id, info in (result.get("created") or {}).items():
                 imported[info["id"]] = targets.get(creation_id, {})

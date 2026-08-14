@@ -1,10 +1,11 @@
 from typing import ClassVar, Literal
 
 import frappe
+from jmap.batch import Batch
+from jmap.core.invocation import Handle
 
 from suite import __version__
 from suite.mail.jmap.models import EmailAttachment, EmailCreateModel, EmailRecipient
-from suite.mail.jmap.services.core import CallIdGenerator
 from suite.mail.jmap.services.mail.mail import MailService
 from suite.mail.jmap.services.mail.mailbox import MailboxService
 from suite.mail.jmap.services.mail.submission.email_submission import EmailSubmissionService
@@ -18,25 +19,39 @@ class EmailService(MailService):
 
     def create(self, emails: list[EmailCreateModel]) -> dict:
         """
-        Public method to create email drafts and optionally submit them, handling batching if the number of emails exceeds the server's maximum allowed in a single 'set' call.
-        Returns a dictionary containing the results of draft creation and submission.
+        Public method to create email drafts and optionally submit them in one JMAP request.
+        Returns the raw response envelope; method responses arrive in queue order (drafts first,
+        then the submission, then any implicit responses), which Mail Queue reads positionally
+        and persists as JSON.
         """
 
-        method_calls = []
-
-        call_id_gen = CallIdGenerator()
-
-        draft_calls, draft_refs = self._create(emails, call_id_gen)
-        method_calls.extend(draft_calls)
+        batch = self._new_batch()
+        handles, draft_refs = self._queue_drafts(batch, emails)
 
         submission_service = EmailSubmissionService(self.account, self.connection)
-        submission_calls = submission_service._create(emails, draft_refs, call_id_gen)
-        method_calls.extend(submission_calls)
+        handles.extend(submission_service._queue_submissions(batch, emails, draft_refs))
 
-        if submission_calls:
-            return submission_service._call(submission_service.capabilities, method_calls=method_calls)
+        self._run(batch)
 
-        return self._call(self.capabilities, method_calls=method_calls)
+        return self._to_envelope(handles)
+
+    @staticmethod
+    def _to_envelope(handles: list[Handle]) -> dict:
+        """Reconstructs the raw `methodResponses` envelope from resolved handles, keeping each
+        call's implicit responses (e.g. the Email/set emitted by onSuccessUpdateEmail) right
+        after it, so positional consumers keep working."""
+
+        method_responses = []
+        for handle in handles:
+            if handle.error is not None:
+                method_responses.append(["error", handle.error.arguments, handle.call_id])
+            else:
+                method_responses.append([handle.call.name, handle.result, handle.call_id])
+
+            for extra in handle.extra:
+                method_responses.append([extra.name, extra.arguments, extra.method_call_id])
+
+        return {"methodResponses": method_responses}
 
     def get(self, ids: list[str], properties: list[str] | None = None) -> list[dict]:
         """Public method to get emails, handling batching if a list of ids is provided and allowing optional specification of properties to retrieve."""
@@ -162,16 +177,6 @@ class EmailService(MailService):
     def search(self, text: str, limit: int = 50, separate_requests: bool = False) -> list[str]:
         """Public method to search for emails matching the given text in subject, to, cc, bcc, body or text."""
 
-        ids: list[str] = []
-
-        def collect_ids(response) -> None:
-            """Helper function to collect unique email IDs from the method responses."""
-
-            for _method, result, _call_id in response.get("methodResponses", []):
-                for id in result.get("ids", []):
-                    if id not in ids:
-                        ids.append(id)
-
         filters = [
             {"subject": text},
             {"to": text},
@@ -181,95 +186,38 @@ class EmailService(MailService):
             {"text": text},
         ]
 
-        method_calls = [
-            [
-                f"{self._type}/query",
-                {
-                    "accountId": self.account,
-                    "filter": f,
-                    "position": 0,
-                    "limit": limit,
-                    "sort": [{"property": "receivedAt", "isAscending": False}],
-                    "calculateTotal": False,
-                },
-                str(i),
-            ]
-            for i, f in enumerate(filters)
-        ]
-
-        if separate_requests:
-            for call in method_calls:
-                collect_ids(self._call(self.capabilities, method_calls=[call]))
-        else:
-            collect_ids(self._call(self.capabilities, method_calls=method_calls))
-
-        return ids[:limit]
+        return self._query_ids(filters, limit, separate_requests)
 
     def query_thread(
         self, filter: dict | None = None, position: int = 0, limit: int = 50, fetch_all: bool = False
     ) -> list[str] | dict[str, list[str]]:
         """Public method to query email threads, returning either a list of thread IDs or a mapping of thread IDs to email IDs of threads matching the filter."""
 
-        method_calls = [
-            [
-                "Email/query",
-                {
-                    "accountId": self.account,
-                    "filter": filter or {},
-                    "sort": [{"property": "receivedAt", "isAscending": False}],
-                    "collapseThreads": True,
-                    "position": position,
-                    "limit": limit,
-                },
-                "0",
-            ]
-        ]
+        batch = self._new_batch()
+        query = batch.add(
+            "Email/query",
+            {
+                "filter": filter or {},
+                "sort": [{"property": "receivedAt", "isAscending": False}],
+                "collapseThreads": True,
+                "position": position,
+                "limit": limit,
+            },
+        )
 
+        threads = None
         if fetch_all:
-            method_calls.extend(
-                [
-                    [
-                        "Email/get",
-                        {
-                            "accountId": self.account,
-                            "#ids": {
-                                "resultOf": "0",
-                                "name": "Email/query",
-                                "path": "/ids",
-                            },
-                            "properties": ["threadId"],
-                        },
-                        "1",
-                    ],
-                    [
-                        "Thread/get",
-                        {
-                            "accountId": self.account,
-                            "#ids": {
-                                "resultOf": "1",
-                                "name": "Email/get",
-                                "path": "/list/*/threadId",
-                            },
-                            "properties": ["id", "emailIds"],
-                        },
-                        "2",
-                    ],
-                ]
+            emails = batch.add("Email/get", {"ids": query.ref_ids(), "properties": ["threadId"]})
+            threads = batch.add(
+                "Thread/get", {"ids": emails.ref_list("threadId"), "properties": ["id", "emailIds"]}
             )
 
-        response = self._call(self.capabilities, method_calls=method_calls)
-        method_responses = response.get("methodResponses", [])
+        self._run(batch)
 
         if not fetch_all:
-            if not method_responses:
-                return []
+            return self._read(query).get("ids", [])
 
-            return method_responses[0][1].get("ids", [])
-
-        if len(method_responses) < 3:
-            return {}
-
-        return {thread["id"]: thread.get("emailIds", []) for thread in method_responses[2][1].get("list", [])}
+        return {thread["id"]: thread.get("emailIds", []) for thread in self._read(threads).get("list", [])}
 
     def get_email_suggestions(self, text: str, limit: int = 5, separate_requests: bool = False) -> list[str]:
         """
@@ -284,16 +232,7 @@ class EmailService(MailService):
                 list[str]: A list of email addresses matching the given text.
         """
 
-        ids: list[str] = []
         addresses: list[str] = []
-
-        def collect_ids(response) -> None:
-            """Helper function to collect unique email IDs from the method responses."""
-
-            for _method, result, _call_id in response.get("methodResponses", []):
-                for id in result.get("ids", []):
-                    if id not in ids:
-                        ids.append(id)
 
         filters = [
             {"from": text},
@@ -302,27 +241,7 @@ class EmailService(MailService):
             {"bcc": text},
         ]
 
-        method_calls = [
-            [
-                f"{self._type}/query",
-                {
-                    "accountId": self.account,
-                    "filter": f,
-                    "position": 0,
-                    "limit": limit,
-                    "sort": [{"property": "receivedAt", "isAscending": False}],
-                    "calculateTotal": False,
-                },
-                str(i),
-            ]
-            for i, f in enumerate(filters)
-        ]
-
-        if separate_requests:
-            for call in method_calls:
-                collect_ids(self._call(self.capabilities, method_calls=[call]))
-        else:
-            collect_ids(self._call(self.capabilities, method_calls=method_calls))
+        ids = self._query_ids(filters, limit, separate_requests)
 
         if not ids:
             return addresses
@@ -342,10 +261,45 @@ class EmailService(MailService):
 
         return addresses[:limit]
 
-    def _create(self, emails: list[EmailCreateModel], call_id_gen: CallIdGenerator) -> tuple[list, dict]:
-        """Helper method to create email drafts for the given list of EmailCreateModel instances and return the method calls for the JMAP request along with a mapping of creation IDs to draft references."""
+    def _query_ids(self, filters: list[dict], limit: int, separate_requests: bool = False) -> list[str]:
+        """Helper method to run one Email/query per filter (in one request, or one request each)
+        and collect the unique email IDs across every result, capped at the limit."""
 
-        method_calls = []
+        ids: list[str] = []
+
+        def collect_ids(handles: list[Handle]) -> None:
+            for handle in handles:
+                for id in self._read(handle).get("ids", []):
+                    if id not in ids:
+                        ids.append(id)
+
+        def query_args(filter: dict) -> dict:
+            return {
+                "filter": filter,
+                "position": 0,
+                "limit": limit,
+                "sort": [{"property": "receivedAt", "isAscending": False}],
+                "calculateTotal": False,
+            }
+
+        if separate_requests:
+            for filter in filters:
+                batch = self._new_batch()
+                handle = batch.add(f"{self._type}/query", query_args(filter))
+                self._run(batch)
+                collect_ids([handle])
+        else:
+            batch = self._new_batch()
+            handles = [batch.add(f"{self._type}/query", query_args(filter)) for filter in filters]
+            self._run(batch)
+            collect_ids(handles)
+
+        return ids[:limit]
+
+    def _queue_drafts(self, batch: Batch, emails: list[EmailCreateModel]) -> tuple[list[Handle], dict]:
+        """Helper method to queue draft creation for the given list of EmailCreateModel instances on the batch, returning the handles along with a mapping of creation IDs to draft references."""
+
+        handles = []
         draft_refs = {}
 
         mailbox_service = MailboxService(self.account, self.connection)
@@ -364,11 +318,10 @@ class EmailService(MailService):
             if email.raw_message:
                 blob = self.upload_blob(email.raw_message.encode("utf-8"), content_type="message/rfc822")
 
-                method_calls.append(
-                    [
+                handles.append(
+                    batch.add(
                         f"{self.type}/import",
                         {
-                            "accountId": self.account,
                             "emails": {
                                 draft_ref: {
                                     "blobId": blob["blobId"],
@@ -377,39 +330,26 @@ class EmailService(MailService):
                                 }
                             },
                         },
-                        call_id_gen.next(),
-                    ]
+                    )
                 )
 
                 # Destroy old email if existing_id is provided.
                 if email.existing_id:
-                    method_calls.append(
-                        [
-                            f"{self.type}/set",
-                            {
-                                "accountId": self.account,
-                                "destroy": [email.existing_id],
-                            },
-                            call_id_gen.next(),
-                        ]
-                    )
+                    handles.append(batch.add(f"{self.type}/set", {"destroy": [email.existing_id]}))
 
             # --------------------------------------------------
             # NORMAL DRAFT → Email/set
             # --------------------------------------------------
 
             else:
-                payload = {
-                    "accountId": self.account,
-                    "create": {draft_ref: self._get_draft(email, draft_mailbox_id)},
-                }
+                payload = {"create": {draft_ref: self._get_draft(email, draft_mailbox_id)}}
 
                 if email.existing_id:
                     payload["destroy"] = [email.existing_id]
 
-                method_calls.append([f"{self.type}/set", payload, call_id_gen.next()])
+                handles.append(batch.add(f"{self.type}/set", payload))
 
-        return method_calls, draft_refs
+        return handles, draft_refs
 
     @staticmethod
     def _get_recipients(
