@@ -241,32 +241,19 @@ class CalendarEventService(CalendarsService):
 
         result = {"parsed": {}, "notFound": {}, "notParsable": {}}
         for batch in self.create_batches(blob_ids, self.max_objects_in_get):
-            response = self._call(
-                self.capabilities,
-                [
-                    [
-                        f"{self.type}/parse",
-                        {
-                            "accountId": self.account,
-                            "blobIds": batch,
-                        },
-                        "0",
-                    ]
-                ],
-            )
+            body = self.call(f"{self.type}/parse", {"blobIds": batch})
 
-            if method_responses := response.get("methodResponses"):
-                result["parsed"].update(method_responses[0][1].get("parsed", {}))
-                # The server reports notFound/notParsable as blob-id arrays; keep the
-                # dict shape callers read (.keys()) by keying the ids.
-                if not_found := method_responses[0][1].get("notFound"):
-                    result["notFound"].update(
-                        dict.fromkeys(not_found) if isinstance(not_found, list) else not_found
-                    )
-                if not_parsable := method_responses[0][1].get("notParsable"):
-                    result["notParsable"].update(
-                        dict.fromkeys(not_parsable) if isinstance(not_parsable, list) else not_parsable
-                    )
+            result["parsed"].update(body.get("parsed", {}))
+            # The server reports notFound/notParsable as blob-id arrays; keep the
+            # dict shape callers read (.keys()) by keying the ids.
+            if not_found := body.get("notFound"):
+                result["notFound"].update(
+                    dict.fromkeys(not_found) if isinstance(not_found, list) else not_found
+                )
+            if not_parsable := body.get("notParsable"):
+                result["notParsable"].update(
+                    dict.fromkeys(not_parsable) if isinstance(not_parsable, list) else not_parsable
+                )
 
         return result
 

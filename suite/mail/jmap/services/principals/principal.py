@@ -99,7 +99,6 @@ class PrincipalService(CalendarsService):
         """Public method to get principal availability, allowing for optional details and event properties to be specified."""
 
         payload = {
-            "accountId": self.account,
             "id": principal_id,
             "start": utc_start,
             "end": utc_end,
@@ -109,9 +108,4 @@ class PrincipalService(CalendarsService):
         if show_details and event_properties:
             payload["eventProperties"] = event_properties
 
-        response = self._call(self.capabilities, [[f"{self.type}/getAvailability", payload, "0"]])
-
-        if method_responses := response.get("methodResponses"):
-            return method_responses[0][1]
-
-        return {}
+        return self.call(f"{self.type}/getAvailability", payload)
