@@ -168,6 +168,7 @@
 										@move-mail="(m: Mail, target: string) => emit('moveMail', m, target)"
 										@mark-mail-spam="(m: Mail, spam: boolean) => emit('markMailSpam', m, spam)"
 										@delete-mail="(m: Mail) => emit('deleteMail', m)"
+										@category-changed="setMailCategory"
 									/>
 								</div>
 								<!-- An expanded mail always needs the gap between header and body —
@@ -349,6 +350,7 @@
 												@move-mail="(m: Mail, target: string) => emit('moveMail', m, target)"
 												@mark-mail-spam="(m: Mail, spam: boolean) => emit('markMailSpam', m, spam)"
 												@delete-mail="(m: Mail) => emit('deleteMail', m)"
+												@category-changed="setMailCategory"
 											/>
 											</div>
 										</div>
@@ -640,6 +642,7 @@ import type {
 	Recipient,
 	ScreenedAddress,
 } from '@/apps/mail/types'
+import type { MailCategory } from '@/apps/mail/utils/categories'
 
 const {
 	mailbox,
@@ -936,6 +939,16 @@ const handleSyncUnseen = (ids: string[]) => {
 	thread.value.forEach(markUnseen)
 	;(threadFallback.data as Mail[] | undefined)?.forEach(markUnseen)
 	emit('syncUnseen', ids)
+}
+
+// A message moved to another category from its menu. Reflected on the thread and its fallback
+// cache, as an unread marker is, so the menu stops offering the category the message is now in.
+const setMailCategory = (moved: Mail, category: MailCategory) => {
+	const setCategory = (mail: Mail) => {
+		if (mail.id === moved.id) mail.category = category
+	}
+	thread.value.forEach(setCategory)
+	;(threadFallback.data as Mail[] | undefined)?.forEach(setCategory)
 }
 
 // A reply that arrives while the thread is open (picked up by a background list reload) is appended

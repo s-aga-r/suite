@@ -58,6 +58,7 @@ import {
 	raiseOptimisticToast,
 	raiseToast,
 } from '@/apps/mail/utils'
+import { CATEGORIES } from '@/apps/mail/utils/categories'
 import { useFilterBySender, useScreenSize, useUndo } from '@/apps/mail/utils/composables'
 import { mailCopyIds } from '@/apps/mail/utils/mailCopies'
 import { injectAccountScope } from '@/apps/mail/utils/accountScope'
@@ -90,7 +91,14 @@ const {
 	thread: Mail[]
 }>()
 
-const emit = defineEmits(['setFlagged', 'syncUnseen', 'moveMail', 'markMailSpam', 'deleteMail'])
+const emit = defineEmits([
+	'setFlagged',
+	'syncUnseen',
+	'moveMail',
+	'markMailSpam',
+	'deleteMail',
+	'categoryChanged',
+])
 
 const { isMobile } = useScreenSize()
 const route = useRoute()
@@ -255,6 +263,17 @@ const moreActions = (mail: Mail): GroupedAction[] => [
 		],
 	},
 	{
+		// A correction of what the message was classified as. The category it is in already is
+		// left out, so every row here is a move.
+		group: __('Move to Category'),
+		options: CATEGORIES.filter(({ value }) => value !== mail.category).map((category) => ({
+			label: category.label(),
+			onClick: () => handleSetCategory(category),
+			icon: category.icon,
+			condition: () => carriesCategory(mail),
+		})),
+	},
+	{
 		group: '',
 		options: [
 			{
@@ -290,6 +309,66 @@ const downloadEmail = createResource({
 	},
 	onError: (error) => raiseToast(error.message, 'error'),
 })
+
+// Mail the user wrote, and mail in Junk or Trash, is never given a category (see
+// suite.mail.classification), and none is given at all on a site that does not classify its mail.
+const carriesCategory = (mail: Mail) => {
+	const uncategorised = [
+		mailboxIds.value.sent,
+		mailboxIds.value.drafts,
+		mailboxIds.value.junk,
+		mailboxIds.value.trash,
+	]
+	return (
+		!!user.data.email_classification &&
+		!mail.draft &&
+		!mail.mailboxes.some((m) => uncategorised.includes(m.mailbox_id))
+	)
+}
+
+const setCategory = createResource({
+	url: 'suite.mail.api.mail.set_mails_category',
+	makeParams: ({ category, remember }: { category: string; remember: boolean }) => ({
+		account: scopeAccountId.value,
+		ids: mailCopyIds(mail),
+		category,
+		remember_senders: remember,
+	}),
+})
+
+type Category = (typeof CATEGORIES)[number]
+
+const handleSetCategory = async (category: Category) => {
+	try {
+		await setCategory.submit({ category: category.value, remember: false })
+	} catch {
+		return raiseToast(__('Unable to change the category.'), 'error')
+	}
+
+	emit('categoryChanged', mail, category.value)
+
+	// Moving one message says nothing about the next from the same sender, so that is offered, not
+	// assumed. Not for mail from the user's own addresses, which a rule would be of no use for.
+	const isOwn = identities.value.data.some((i: Identity) => i.email === mail.from_email)
+	raiseToast(
+		__('Moved to {0}.', [category.label()]),
+		'success',
+		mail.from_email && !isOwn
+			? { label: __('Always for This Sender'), onClick: () => rememberSender(category) }
+			: undefined,
+		8000,
+	)
+}
+
+const rememberSender = async (category: Category) => {
+	try {
+		await setCategory.submit({ category: category.value, remember: true })
+	} catch {
+		return raiseToast(__('Unable to remember the sender.'), 'error')
+	}
+
+	raiseToast(__('Mail from {0} will go to {1}.', [mail.from_email, category.label()]))
+}
 
 const moveMail = createResource({
 	url: 'suite.mail.api.mail.move_mails',

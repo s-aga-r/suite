@@ -4,7 +4,9 @@
 sender decides the category of its mail, ahead of anything read off the message."""
 
 import unittest
+from unittest import mock
 
+from suite.mail.api import mail as mail_api
 from suite.mail.classification import Category, SenderRules, classify
 from suite.mail.classification.rules import load_default_rules
 from suite.mail.tests.test_email_classification import ACCOUNT, NEWSLETTER, _email, _keywords, _Mail
@@ -120,3 +122,93 @@ class RulesOutrankTheMessage(unittest.TestCase):
             [{"e1": {"keywords/category_updates": True}}],
         )
         self.assertEqual(_keywords(message), {"category_updates": True})
+
+
+class Correction(unittest.TestCase):
+    """A user moves mail to the category it should have been given."""
+
+    def move(self, mail: _Mail, category: str, *ids: str, remember_senders: bool = False) -> mock.Mock:
+        """Corrects `ids` to `category`; returns the stand-in the senders to remember are handed to."""
+
+        with mail.patched(), mock.patch.object(mail_api, "remember_senders_category") as remember:
+            self.moved = mail_api.set_mails_category(
+                ACCOUNT, list(ids or mail.emails), category, remember_senders=remember_senders
+            )
+
+        return remember
+
+    def classified(self, *emails: dict) -> _Mail:
+        """A mailbox whose `emails` have been fetched, and so classified, already."""
+
+        mail = _Mail(*emails)
+        mail.fetch()
+        mail.server.requests.clear()
+        return mail
+
+    def test_the_message_takes_the_new_category_and_gives_up_the_old(self):
+        mail = self.classified(_email("e1", sender="hello@shop.example", headers=NEWSLETTER))
+
+        self.move(mail, "updates")
+
+        self.assertEqual(mail.emails["e1"]["keywords"].get("category_updates"), True)
+        self.assertFalse(mail.emails["e1"]["keywords"].get("category_promotions"))
+
+    def test_the_cached_message_carries_only_the_new_category(self):
+        mail = self.classified(
+            _email("e1", sender="hello@shop.example", headers=NEWSLETTER, keywords={"$seen": True})
+        )
+
+        self.move(mail, "updates")
+
+        self.assertEqual(_keywords(mail.cache["e1"]), {"$seen": True, "category_updates": True})
+
+    def test_mail_that_carries_no_category_is_left_as_it_is(self):
+        # A whole thread is handed over, the user's own replies in it included.
+        mail = self.classified(
+            _email("e1", sender="hello@shop.example", headers=NEWSLETTER),
+            _email("e2", sender="user@example.test", mailbox="sent"),
+        )
+
+        self.move(mail, "updates")
+
+        self.assertEqual(self.moved, ["e1"])
+        self.assertEqual(mail.emails["e2"]["keywords"], {})
+
+    def test_the_senders_of_the_moved_mail_are_remembered_when_asked(self):
+        mail = self.classified(
+            _email("e1", sender="hello@shop.example", headers=NEWSLETTER),
+            _email("e2", sender="user@example.test", mailbox="sent"),
+        )
+
+        remember = self.move(mail, "updates", remember_senders=True)
+
+        remember.assert_called_once_with(ACCOUNT, ["hello@shop.example"], Category.UPDATES)
+
+    def test_no_sender_is_remembered_unless_asked(self):
+        mail = self.classified(_email("e1", sender="hello@shop.example", headers=NEWSLETTER))
+
+        remember = self.move(mail, "updates")
+
+        remember.assert_not_called()
+
+    def test_a_mail_is_served_with_the_category_it_was_moved_to(self):
+        # What the message's menu reads, to leave out the category it is in already.
+        mail = self.classified(_email("e1", sender="hello@shop.example", headers=NEWSLETTER))
+        self.assertEqual(mail_api.serialize_mail(mail.cache["e1"])["category"], "promotions")
+
+        self.move(mail, "updates")
+
+        self.assertEqual(mail_api.serialize_mail(mail.cache["e1"])["category"], "updates")
+
+    def test_a_mail_without_a_category_is_served_without_one(self):
+        mail = self.classified(_email("e1", sender="user@example.test", mailbox="sent"))
+
+        self.assertIsNone(mail_api.serialize_mail(mail.cache["e1"])["category"])
+
+    def test_a_category_that_does_not_exist_is_refused(self):
+        mail = self.classified(_email("e1", sender="hello@shop.example", headers=NEWSLETTER))
+
+        with self.assertRaises(Exception):
+            self.move(mail, "spam")
+
+        self.assertEqual(mail.calls("Email/set"), [])

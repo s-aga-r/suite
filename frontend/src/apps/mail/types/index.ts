@@ -1,4 +1,5 @@
 import type { UserAccount } from './doctypes'
+import type { MailCategory } from '@/apps/mail/utils/categories'
 
 export * from './doctypes'
 
@@ -136,6 +137,9 @@ export interface Mail {
 	flagged: 0 | 1
 	seen: 0 | 1
 	junk: 0 | 1
+	// The category the message was classified as, or corrected to. None on mail that carries no
+	// category: the user's own, and what is in Junk or Trash.
+	category?: MailCategory | null
 	mailboxes: Mailbox[]
 	recipients: Recipient[]
 	groupedRecipients: {

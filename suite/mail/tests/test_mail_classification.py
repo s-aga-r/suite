@@ -1,7 +1,7 @@
 # Copyright (c) 2026, Frappe Technologies Pvt. Ltd. and contributors
 # For license information, please see license.txt
 
-from suite.mail.api.mail import get_threads
+from suite.mail.api.mail import get_threads, set_mails_category
 from suite.mail.doctype.mail_message.mail_message import fetch_messages
 from suite.mail.jmap import get_mailbox_id_by_role
 from suite.mail.tests.base import StalwartIntegrationTestCase
@@ -70,6 +70,33 @@ class TestMailClassification(StalwartIntegrationTestCase):
             message="Classified mail is missing from the inbox filtered to its category.",
         )
         self.assertNotIn(thread["subject"], subjects("category_promotions"))
+
+    def test_a_corrected_message_changes_category_on_the_server(self):
+        thread = self.deliver_mail(self.sender, self.receiver)
+
+        with self.set_user(self.receiver.email):
+            moved = set_mails_category(self.personal_account(self.receiver), [thread["id"]], "updates")
+
+        keywords = self._server_keywords(self.receiver, "inbox", thread["subject"])
+        self.assertEqual(moved, [thread["id"]])
+        self.assertTrue(keywords.get("category_updates"))
+        self.assertFalse(keywords.get("category_primary"))
+
+    def test_a_remembered_sender_has_its_next_mail_given_the_category(self):
+        # Its own pair: a rule for the shared sender would decide the other tests' mail too.
+        sender, receiver = self.create_member(), self.create_member()
+        self.disable_screening(receiver)
+        first = self.deliver_mail(sender, receiver)
+
+        with self.set_user(receiver.email):
+            set_mails_category(
+                self.personal_account(receiver), [first["id"]], "promotions", remember_senders=True
+            )
+        second = self.deliver_mail(sender, receiver)
+
+        keywords = self._server_keywords(receiver, "inbox", second["subject"])
+        self.assertTrue(keywords.get("category_promotions"))
+        self.assertFalse(keywords.get("category_primary"))
 
     def test_sent_mail_is_not_categorised(self):
         thread = self.deliver_mail(self.sender, self.receiver)

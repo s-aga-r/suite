@@ -1,17 +1,8 @@
 import { computed, ref, type Component } from 'vue'
-import {
-	Inbox,
-	Info,
-	Mail as MailIcon,
-	Mails,
-	MessagesSquare,
-	Paperclip,
-	Star,
-	Tag,
-	Users,
-} from 'lucide-vue-next'
+import { Mail as MailIcon, Mails, Paperclip, Star } from 'lucide-vue-next'
 
 import { userStore } from '@/apps/mail/stores/user'
+import { CATEGORIES, categoryKeyword } from '@/apps/mail/utils/categories'
 
 /** One entry of the filter menu — what the toolbar hands to Dropdown/AdaptiveDropdown. */
 export interface FilterOption {
@@ -29,17 +20,6 @@ export interface FilterGroup {
 }
 
 export type FilterOptions = (FilterOption | FilterGroup)[]
-
-// The categories mail is sorted into as it is first fetched (suite.mail.classification). A list is
-// filtered to one by the keyword that marks a message as being in it. Labels are functions: the
-// translations are not loaded yet when this module is.
-const CATEGORIES = [
-	{ keyword: 'category_primary', label: () => __('Primary'), icon: Inbox },
-	{ keyword: 'category_promotions', label: () => __('Promotions'), icon: Tag },
-	{ keyword: 'category_social', label: () => __('Social'), icon: Users },
-	{ keyword: 'category_updates', label: () => __('Updates'), icon: Info },
-	{ keyword: 'category_forums', label: () => __('Forums'), icon: MessagesSquare },
-]
 
 interface StoredFilterOptions {
 	/**
@@ -121,12 +101,12 @@ export const useStoredFilter = ({
 		},
 		{
 			group: __('Categories'),
-			options: CATEGORIES.map(({ keyword, label, icon }) => ({
+			options: CATEGORIES.map(({ value, label, icon }) => ({
 				label: label(),
 				icon,
-				onClick: () => setFilter(keyword),
+				onClick: () => setFilter(categoryKeyword(value)),
 				condition: categorized,
-				selected: filter.value === keyword,
+				selected: filter.value === categoryKeyword(value),
 			})),
 		},
 	])
@@ -142,7 +122,9 @@ export const useStoredFilter = ({
 			case 'has_attachments':
 				return __('With Attachments')
 			default: {
-				const category = CATEGORIES.find(({ keyword }) => keyword === filter.value)
+				const category = CATEGORIES.find(
+					({ value }) => categoryKeyword(value) === filter.value,
+				)
 				return category ? category.label() : __('All Mails')
 			}
 		}

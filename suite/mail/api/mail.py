@@ -1,8 +1,10 @@
 import hashlib
 import io
+import json
 import os
 import zipfile
 from datetime import datetime
+from typing import Literal
 
 import frappe
 import pydenticon
@@ -18,7 +20,10 @@ from suite.mail.api.contacts import (
     get_contacts,
 )
 from suite.mail.api.utils import get_avatar_url
-from suite.mail.classification import Category
+from suite.mail.classification import Category, get_category
+from suite.mail.doctype.mail_classification_rule.mail_classification_rule import (
+    remember_senders as remember_senders_category,
+)
 from suite.mail.doctype.mail_message.mail_message import (
     add_messages_to_mailbox,
     delete_messages,
@@ -31,6 +36,7 @@ from suite.mail.doctype.mail_message.mail_message import (
     move_messages_to_mailbox,
     remove_messages_from_mailbox,
     search_messages,
+    set_category,
     set_flagged_status,
     set_messages_mailboxes,
     set_seen_status,
@@ -623,6 +629,7 @@ def serialize_mail(mail: dict) -> dict:
     return {
         **{field: mail[field] for field in mail_fields},
         "text_body": "" if html else mail.get("text_body", ""),
+        "category": get_category(json.loads(mail.get("keywords") or "{}")),
         "attachments": serialize_attachments(mail.get("attachments", [])),
         "dsn_blob_id": _get_dsn_blob_id(mail),
     }
@@ -1022,6 +1029,26 @@ def set_mails_spam_status(
     _screen_senders(account, ids, screen_action)
 
     return ids
+
+
+@frappe.whitelist()
+def set_mails_category(
+    account: str,
+    ids: list[str],
+    category: Literal["primary", "promotions", "social", "updates", "forums"],
+    remember_senders: bool = False,
+) -> list[str]:
+    """Moves the given mails to a category, as a correction of what they were classified as.
+
+    With `remember_senders`, future mail from their senders is given that category in this account
+    too. Returns the ids of the mails moved: those that carry no category are left as they are.
+    """
+
+    moved = set_category(account, ids, Category(category))
+    if remember_senders:
+        remember_senders_category(account, [m["from_email"] for m in moved], Category(category))
+
+    return [m["id"] for m in moved]
 
 
 @frappe.whitelist()

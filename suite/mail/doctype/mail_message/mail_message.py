@@ -1211,6 +1211,46 @@ def set_flagged_status(account: str, ids: list[str], flagged: bool = True) -> No
         frappe.throw(_("Failed to set flagged status for mail(s)."))
 
 
+def set_category(account: str, ids: list[str], category: classification.Category) -> list[dict]:
+    """Move messages to `category`, as a user does to correct what they were classified as.
+
+    Returns the messages moved. Mail that carries no category - the user's own, and what is in
+    Junk or Trash - is left out, so a whole thread can be handed over.
+    """
+
+    if not account or not ids:
+        frappe.throw(_("Account and Mail IDs are required."))
+
+    try:
+        skipped = classification.uncategorised_mailboxes(get_cached_mailboxes(account))
+        messages = [
+            message
+            for message in get_messages(account, ids)
+            if not message["draft"] and skipped.isdisjoint(m["mailbox_id"] for m in message["mailboxes"])
+        ]
+        if not messages:
+            return []
+
+        # A message is in one category: taking the new keyword means giving up the others.
+        keywords = {other.keyword: other is category for other in classification.Category}
+        _update_emails(account, [{"id": message["id"], "keywords": keywords} for message in messages])
+
+        for message in messages:
+            kept = {k: v for k, v in json.loads(message["keywords"]).items() if k not in keywords}
+            message["keywords"] = json.dumps({**kept, category.keyword: True}, indent=4)
+            message["classified"] = 1
+
+        _cache_messages(account, {message["id"]: message for message in messages})
+
+        return messages
+    except Exception:
+        log_mail_error(
+            _("Failed to set category for mail(s)"),
+            frappe.get_traceback(with_context=True),
+        )
+        frappe.throw(_("Failed to set category for mail(s)."))
+
+
 def set_spam_status(account: str, ids: list[str], spam: bool = True) -> None:
     """Set the spam status for messages."""
 
