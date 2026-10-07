@@ -1,0 +1,106 @@
+[
+ {
+  "sender": "@bsky.app",
+  "category": "Social"
+ },
+ {
+  "sender": "@discord.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@facebook.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@facebookmail.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@instagram.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@linkedin.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@mastodon.social",
+  "category": "Social"
+ },
+ {
+  "sender": "@medium.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@meetup.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@nextdoor.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@pinterest.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@quora.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@reddit.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@redditmail.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@snapchat.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@strava.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@telegram.org",
+  "category": "Social"
+ },
+ {
+  "sender": "@threads.net",
+  "category": "Social"
+ },
+ {
+  "sender": "@tiktok.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@tumblr.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@twitch.tv",
+  "category": "Social"
+ },
+ {
+  "sender": "@twitter.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@vk.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@whatsapp.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@x.com",
+  "category": "Social"
+ },
+ {
+  "sender": "@youtube.com",
+  "category": "Social"
+ }
+]

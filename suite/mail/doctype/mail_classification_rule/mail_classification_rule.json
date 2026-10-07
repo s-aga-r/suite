@@ -1,0 +1,120 @@
+{
+ "actions": [],
+ "creation": "2026-10-07 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "section_break_rule",
+  "sender",
+  "category",
+  "column_break_rule",
+  "account",
+  "enabled",
+  "is_default"
+ ],
+ "fields": [
+  {
+   "fieldname": "section_break_rule",
+   "fieldtype": "Section Break"
+  },
+  {
+   "description": "The sender this rule is for: either an email address (john@example.com) or a domain prefixed with @ (@example.com), which covers every sender from that domain and its subdomains.",
+   "fieldname": "sender",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Email or Domain",
+   "no_copy": 1,
+   "reqd": 1,
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "description": "The category mail from this sender is given when it is first fetched. Mail that already has a category is not changed.",
+   "fieldname": "category",
+   "fieldtype": "Select",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Category",
+   "options": "Primary\nPromotions\nSocial\nUpdates\nForums",
+   "reqd": 1
+  },
+  {
+   "fieldname": "column_break_rule",
+   "fieldtype": "Column Break"
+  },
+  {
+   "description": "The JMAP account this rule belongs to. It applies to everyone with access to the account, and wins over a site-wide rule for the same sender. Leave empty to make the rule site-wide: it applies to every account. Only a System Manager or Suite Admin can manage site-wide rules.",
+   "fieldname": "account",
+   "fieldtype": "Link",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Account",
+   "no_copy": 1,
+   "options": "JMAP Account",
+   "search_index": 1,
+   "set_only_once": 1
+  },
+  {
+   "default": "1",
+   "description": "A disabled rule is ignored. Disable a default rule instead of deleting it: a deleted one comes back with the next update.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "in_list_view": 1,
+   "in_standard_filter": 1,
+   "label": "Enabled"
+  },
+  {
+   "default": "0",
+   "description": "Shipped with the app and kept in step with it on every update. A default rule cannot be edited, only disabled; a site-wide or account rule for the same sender wins over it.",
+   "fieldname": "is_default",
+   "fieldtype": "Check",
+   "in_standard_filter": 1,
+   "label": "Default Rule",
+   "no_copy": 1,
+   "read_only": 1
+  }
+ ],
+ "grid_page_length": 50,
+ "index_web_pages_for_search": 1,
+ "links": [],
+ "modified": "2026-10-07 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Mail",
+ "name": "Mail Classification Rule",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "export": 1,
+   "print": 1,
+   "read": 1,
+   "report": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Suite Admin",
+   "write": 1
+  },
+  {
+   "create": 1,
+   "delete": 1,
+   "read": 1,
+   "role": "Suite User",
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "rows_threshold_for_grid_search": 20,
+ "sort_field": "creation",
+ "sort_order": "DESC",
+ "states": [],
+ "track_changes": 1
+}

@@ -146,6 +146,7 @@ permission_query_conditions = {
     "Mail Sync History": "suite.mail.doctype.mail_sync_history.mail_sync_history.get_permission_query_condition",
     "Mailbox Settings": "suite.mail.doctype.mailbox_settings.mailbox_settings.get_permission_query_condition",
     "Screened Email Address": "suite.mail.doctype.screened_email_address.screened_email_address.get_permission_query_condition",
+    "Mail Classification Rule": "suite.mail.doctype.mail_classification_rule.mail_classification_rule.get_permission_query_condition",
 }
 
 # ============================================================================
@@ -185,6 +186,7 @@ has_permission = {
     "Push Subscription": "suite.mail.doctype.push_subscription.push_subscription.has_permission",
     "Quota": "suite.mail.doctype.quota.quota.has_permission",
     "Screened Email Address": "suite.mail.doctype.screened_email_address.screened_email_address.has_permission",
+    "Mail Classification Rule": "suite.mail.doctype.mail_classification_rule.mail_classification_rule.has_permission",
     "Sieve Script": "suite.mail.doctype.sieve_script.sieve_script.has_permission",
     "Vacation Response": "suite.mail.doctype.vacation_response.vacation_response.has_permission",
 }
@@ -386,6 +388,7 @@ ignore_links_on_delete = [
     "JMAP Account",
     "User Account",
     "Screened Email Address",
+    "Mail Classification Rule",
     "Mail Exchange",
     "Mail Queue",
     "Mail Signature",

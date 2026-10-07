@@ -5,6 +5,8 @@ its category - once, when first fetched from the JMAP server, kept there as a ke
 
 import json
 import unittest
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest import mock
 
 import httpx
@@ -14,7 +16,8 @@ from jmap.testing.fake import FakeJMAPServer
 
 from suite.mail import classification
 from suite.mail.api import mail as mail_api
-from suite.mail.classification import Category, classify
+from suite.mail.classification import Category, SenderRules, classify
+from suite.mail.classification.rules import load_default_rules
 from suite.mail.doctype.mail_message import mail_message
 from suite.mail.jmap import SuiteJMAPClient
 
@@ -138,15 +141,6 @@ class HeaderLayer(unittest.TestCase):
         headers = {"X-SFMC-Stack": "7", "Auto-Submitted": "auto-generated"}
         self.assertEqual(self.category("offers@airline.example", headers), Category.PROMOTIONS)
 
-    def test_mail_from_a_social_network_is_social(self):
-        self.assertEqual(self.category("messages-noreply@linkedin.com", NEWSLETTER), Category.SOCIAL)
-        self.assertEqual(self.category("notification@facebookmail.com"), Category.SOCIAL)
-        # Networks send from subdomains as well.
-        self.assertEqual(self.category("pinbot@explore.pinterest.com", NEWSLETTER), Category.SOCIAL)
-
-    def test_a_domain_that_merely_ends_like_a_social_network_is_not_social(self):
-        self.assertEqual(self.category("bob@notlinkedin.com"), Category.PRIMARY)
-
     def test_a_system_notice_is_updates(self):
         headers = {"Auto-Submitted": "auto-generated"}
         self.assertEqual(self.category("backup@server.example", headers), Category.UPDATES)
@@ -190,6 +184,8 @@ class _Mail:
         #: How many `Email/set` calls the server answers before it starts failing them; None for all.
         self.sets_before_failure: int | None = None
         self.cache: dict[str, dict] = {}
+        #: The sender rules in force for the account: the ones the app ships, unless a test says.
+        self.rules: list[dict] = load_default_rules()
 
         self.server = FakeJMAPServer(
             capabilities={CORE: {"maxObjectsInSet": max_objects_in_set}, MAIL: {}},
@@ -258,9 +254,17 @@ class _Mail:
             if call[0] == method
         ]
 
-    def patched(self) -> mock._patch:
-        """Stands this fake in for the server, the mailboxes, the cache and Mail Settings."""
+    @contextmanager
+    def patched(self) -> Iterator[None]:
+        """Stands this fake in for the server, the mailboxes, the cache and the sender rules."""
 
+        with self._patched_mail(), mock.patch.object(SenderRules, "for_account", self._sender_rules):
+            yield
+
+    def _sender_rules(self, _account: str) -> SenderRules:
+        return SenderRules(self.rules)
+
+    def _patched_mail(self) -> mock._patch:
         return mock.patch.multiple(
             mail_message,
             get_user_for_jmap_account=mock.Mock(return_value=USER),

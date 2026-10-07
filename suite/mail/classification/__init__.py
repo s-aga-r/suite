@@ -6,7 +6,9 @@ A message is classified when it is first pulled from the JMAP server, and its ca
 there as a keyword (see `Category.keyword`). The keyword is the record of the work: a message that
 carries one is not classified again, whichever site or device fetches it next.
 
-Classification is layered, cheapest first. Each layer names a category or passes the message on:
+A sender somebody has a rule for is asked first (see `rules`): what a user or an admin has said
+about a sender outranks anything worked out from a message. Classification is layered after that,
+cheapest first, and each layer names a category or passes the message on:
 
 1. `headers` - what the message's headers say about how it was sent.
 2. (planned) a locally trained heuristic classifier.
@@ -24,17 +26,20 @@ from jmap.batch import ReadOnlyAccountError
 
 from suite.mail.classification.category import Category, get_category
 from suite.mail.classification.headers import classify_by_headers
+from suite.mail.classification.rules import SenderRules
 from suite.mail.jmap import SetResult, SuiteJMAPClient, chunked_set
 from suite.mail.utils import get_config, log_mail_error
 
 __all__ = [
     "EMAIL_PROPERTIES",
     "Category",
+    "SenderRules",
     "classify",
     "classify_emails",
     "get_category",
     "is_enabled",
     "take_echoes",
+    "uncategorised_mailboxes",
 ]
 
 # What the layers read of an Email beyond what a message is fetched with anyway.
@@ -62,8 +67,11 @@ def is_enabled() -> bool:
     return bool(get_config("enable_email_classification"))
 
 
-def classify(email: dict) -> Category:
-    """The category of `email`, an Email in JMAP wire form."""
+def classify(email: dict, rules: SenderRules | None = None) -> Category:
+    """The category of `email`, an Email in JMAP wire form, given the sender `rules` in force."""
+
+    if rules and (category := rules.category_for(email)):
+        return category
 
     for layer in LAYERS:
         if category := layer(email):
@@ -91,10 +99,13 @@ def classify_emails(
     """
 
     try:
-        skipped = {m["id"] for m in mailboxes if (m.get("role") or "").lower() in UNCLASSIFIED_ROLES}
-        categories = {email["id"]: classify(email) for email in emails if _awaits_category(email, skipped)}
-        if not categories:
+        skipped = uncategorised_mailboxes(mailboxes)
+        awaiting = [email for email in emails if _awaits_category(email, skipped)]
+        if not awaiting:
             return set()
+
+        rules = SenderRules.for_account(account)
+        categories = {email["id"]: classify(email, rules) for email in awaiting}
 
         # Before the write, not after: its echo can reach a worker before this request resumes.
         _expect_echoes(account, list(categories))
@@ -131,6 +142,12 @@ def _is_refusal(error: Exception) -> bool:
     """Whether `error`, raised by the write of a category, is the server declining to make it."""
 
     return isinstance(error, MethodError) and error.type not in PASSING_ERRORS
+
+
+def uncategorised_mailboxes(mailboxes: list[dict]) -> set[str]:
+    """The ids of those of an account's `mailboxes` whose mail carries no category."""
+
+    return {m["id"] for m in mailboxes if (m.get("role") or "").lower() in UNCLASSIFIED_ROLES}
 
 
 def _awaits_category(email: dict, skipped_mailboxes: set[str]) -> bool:

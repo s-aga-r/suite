@@ -1,6 +1,7 @@
 import frappe
 from frappe.core.api.file import create_new_folder
 
+from suite.mail.doctype.mail_classification_rule.mail_classification_rule import sync_default_rules
 from suite.suite_core.doctype.rate_limit.rate_limit import create_rate_limit
 
 
@@ -8,10 +9,11 @@ def after_install() -> None:
     add_rate_limits()
     create_new_folder("Frappe Mail", "Home")
     generate_jmap_push_keys()
+    sync_default_rules()
 
 
 def after_migrate() -> None:
-    pass
+    sync_default_rules()
 
 
 def add_rate_limits() -> None:
