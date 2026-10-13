@@ -465,6 +465,23 @@ class TestGroupsAndLists(SuiteCloudTestCase):
         directory.clear_mailing_list_index()
         self.assertRaises(frappe.TooManyRequestsError, directory.get_mailing_list_index)
 
+    def test_a_listing_that_never_ends_is_refused_and_keeps_the_previous_index(self) -> None:
+        self.fake.mailing_lists__create_mailing_list(f"news@{DOMAIN}", recipients=[f"bob@{DOMAIN}"])
+        directory.clear_mailing_list_index()
+        index = directory.get_mailing_list_index()
+        frappe.cache.delete_value(directory.INDEX_FRESH_KEY)
+        self.fake.mailing_lists__add_recipients(f"news@{DOMAIN}", [f"alice@{DOMAIN}"])
+
+        with patch.object(directory, "MAX_PAGES", 1):
+            self.assertRaises(
+                directory.ListingCutShortError,
+                directory.all_pages,
+                "mail.mailing_lists.list_all_recipients",
+                limit=1,
+            )
+            with patch.object(directory, "RECIPIENT_PAGE", 1):
+                self.assertEqual(directory.get_mailing_list_index(), index)  # not the cut one
+
 
 class TestMembers(SuiteCloudTestCase):
     def setUp(self) -> None:

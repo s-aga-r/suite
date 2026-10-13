@@ -22,6 +22,10 @@ INDEX_TTL = 60  # seconds an index is served before Suite Cloud is asked again
 INDEX_KEEP = 24 * 3600  # the last good index stays this long to cover a refresh Suite Cloud refuses
 
 
+class ListingCutShortError(frappe.ValidationError):
+    """A paged listing was still going after ``MAX_PAGES``; what came back is not the whole set."""
+
+
 def get_domains() -> list[dict]:
     """The site's domains, read from Suite Cloud on every call so the dashboard is never stale."""
 
@@ -50,10 +54,10 @@ def get_mailing_list_index() -> dict[str, list[str]]:
 
     try:
         index = build_mailing_list_index()
-    except frappe.TooManyRequestsError, SuiteCloudUnavailableError:
+    except (frappe.TooManyRequestsError, SuiteCloudUnavailableError, ListingCutShortError) as e:
         if index is None:
             raise
-        log_mail_error("Mailing list index could not be refreshed; the previous one is in use")
+        log_mail_error("Mailing list index could not be refreshed; the previous one is in use", str(e))
     else:
         # Only a successful build writes the index, so a failed one cannot undo a parallel success.
         frappe.cache.set_value(INDEX_KEY, index, expires_in_sec=INDEX_KEEP)
@@ -77,7 +81,11 @@ def clear_mailing_list_index() -> None:
 
 
 def all_pages(method: str, limit: int = LIST_PAGE, **params) -> list[dict]:
-    """Every item of a paged listing (``{items, total}``), read page by page."""
+    """Every item of a paged listing (``{items, total}``), read page by page.
+
+    Raises ``ListingCutShortError`` rather than return part of the set: a caller that checks for
+    a duplicate or expands a list must not act on a listing with the tail missing.
+    """
 
     client = get_client()
     items: list[dict] = []
@@ -88,8 +96,7 @@ def all_pages(method: str, limit: int = LIST_PAGE, **params) -> list[dict]:
         start += len(page["items"])
         if not page["items"] or start >= page["total"]:
             return items
-    log_mail_error(f"{method} kept answering after {MAX_PAGES} pages; the listing was cut short")
-    return items
+    raise ListingCutShortError(f"{method} kept answering after {MAX_PAGES} pages")
 
 
 def get_group_addresses() -> set[str]:
